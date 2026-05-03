@@ -26,7 +26,8 @@ type Move struct {
 type Session struct {
 	mu sync.RWMutex
 
-	GameID string `json:"game_id"`
+	GameID   string `json:"game_id"`
+	GameMode string `json:"game_mode"`
 
 	Player1ID string `json:"player1_id"`
 	Player2ID string `json:"player2_id"`
@@ -40,6 +41,7 @@ type Session struct {
 
 	BetAmount int64 `json:"bet_amount,omitempty"`
 
+	InitialFEN          string `json:"initial_fen"`
 	FEN                 string `json:"fen"`
 	LastMove            string `json:"last_move"`
 	WinnerID            string `json:"winner_id,omitempty"`
@@ -48,6 +50,8 @@ type Session struct {
 	CurrentPositionHash string `json:"current_position_hash"`
 	VariantPly          int    `json:"variant_ply"`
 	InviteExpiresAt     time.Time
+	BotGame             bool   `json:"bot_game,omitempty"`
+	BotDifficulty       string `json:"bot_difficulty,omitempty"`
 
 	DrawOfferedBy string    `json:"draw_offered_by,omitempty"`
 	DrawOfferedAt time.Time `json:"draw_offered_at,omitempty"`
@@ -57,18 +61,29 @@ type Session struct {
 	engine Engine
 }
 
-func NewSession(gameID, player1ID, player2ID string, betAmount int64, engine Engine) *Session {
+func NewSession(gameID, gameMode, player1ID, player2ID string, betAmount int64, engine Engine) *Session {
 	return &Session{
 		GameID:            gameID,
+		GameMode:          normalizeGameMode(gameMode),
 		Player1ID:         player1ID,
 		Player2ID:         player2ID,
 		Status:            StatusWaiting,
 		CurrentTurnUserID: player1ID,
 		BetAmount:         betAmount,
+		InitialFEN:        engine.CurrentFEN(),
 		FEN:               engine.CurrentFEN(),
 		Moves:             make([]Move, 0, 128),
 		engine:            engine,
 	}
+}
+
+func NewBotSession(gameID, gameMode, player1ID, difficulty string, engine Engine) *Session {
+	session := NewSession(gameID, gameMode, player1ID, botUserID, 0, engine)
+	session.Player2Connected = true
+	session.Status = StatusActive
+	session.BotGame = true
+	session.BotDifficulty = difficulty
+	return session
 }
 
 func (s *Session) HasPlayer(userID string) bool {
@@ -89,6 +104,13 @@ func (s *Session) InviteDeadline() time.Time {
 	defer s.mu.RUnlock()
 
 	return s.InviteExpiresAt
+}
+
+func (s *Session) IsBotGame() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.BotGame
 }
 
 func (s *Session) IsInviteExpired(now time.Time) bool {
@@ -166,6 +188,7 @@ func (s *Session) Snapshot() State {
 
 	return State{
 		GameID:              s.GameID,
+		GameMode:            s.GameMode,
 		Player1ID:           s.Player1ID,
 		Player2ID:           s.Player2ID,
 		Player1Connected:    s.Player1Connected,
@@ -175,6 +198,7 @@ func (s *Session) Snapshot() State {
 		BetAmount:           s.BetAmount,
 		DrawOfferedBy:       s.DrawOfferedBy,
 		DrawOfferedAt:       s.DrawOfferedAt,
+		InitialFEN:          s.InitialFEN,
 		FEN:                 s.FEN,
 		LastMove:            s.LastMove,
 		WinnerID:            s.WinnerID,
@@ -182,6 +206,9 @@ func (s *Session) Snapshot() State {
 		RootPositionHash:    s.RootPositionHash,
 		CurrentPositionHash: s.CurrentPositionHash,
 		VariantPly:          s.VariantPly,
+		BotGame:             s.BotGame,
+		BotDifficulty:       s.BotDifficulty,
+		LegalMoves:          s.legalMovesLocked(),
 		Moves:               moves,
 	}
 }
@@ -247,6 +274,7 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 
 	return State{
 		GameID:              s.GameID,
+		GameMode:            s.GameMode,
 		Player1ID:           s.Player1ID,
 		Player2ID:           s.Player2ID,
 		Player1Connected:    s.Player1Connected,
@@ -256,6 +284,7 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 		BetAmount:           s.BetAmount,
 		DrawOfferedBy:       s.DrawOfferedBy,
 		DrawOfferedAt:       s.DrawOfferedAt,
+		InitialFEN:          s.InitialFEN,
 		FEN:                 s.FEN,
 		LastMove:            s.LastMove,
 		WinnerID:            s.WinnerID,
@@ -263,6 +292,9 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 		RootPositionHash:    s.RootPositionHash,
 		CurrentPositionHash: s.CurrentPositionHash,
 		VariantPly:          s.VariantPly,
+		BotGame:             s.BotGame,
+		BotDifficulty:       s.BotDifficulty,
+		LegalMoves:          s.legalMovesLocked(),
 		Moves:               moves,
 	}, result, nil
 }
@@ -378,6 +410,7 @@ func (s *Session) snapshotLocked() State {
 
 	return State{
 		GameID:              s.GameID,
+		GameMode:            s.GameMode,
 		Player1ID:           s.Player1ID,
 		Player2ID:           s.Player2ID,
 		Player1Connected:    s.Player1Connected,
@@ -387,6 +420,7 @@ func (s *Session) snapshotLocked() State {
 		BetAmount:           s.BetAmount,
 		DrawOfferedBy:       s.DrawOfferedBy,
 		DrawOfferedAt:       s.DrawOfferedAt,
+		InitialFEN:          s.InitialFEN,
 		FEN:                 s.FEN,
 		LastMove:            s.LastMove,
 		WinnerID:            s.WinnerID,
@@ -394,6 +428,42 @@ func (s *Session) snapshotLocked() State {
 		RootPositionHash:    s.RootPositionHash,
 		CurrentPositionHash: s.CurrentPositionHash,
 		VariantPly:          s.VariantPly,
+		BotGame:             s.BotGame,
+		BotDifficulty:       s.BotDifficulty,
+		LegalMoves:          s.legalMovesLocked(),
 		Moves:               moves,
 	}
+}
+
+func (s *Session) legalMovesLocked() []string {
+	type legalMoveProvider interface {
+		LegalMoves() []string
+	}
+
+	provider, ok := s.engine.(legalMoveProvider)
+	if !ok {
+		return nil
+	}
+
+	moves := provider.LegalMoves()
+	if len(moves) == 0 {
+		return nil
+	}
+
+	cloned := make([]string, len(moves))
+	copy(cloned, moves)
+	return cloned
+}
+
+func (s *Session) FinishDraw(reason string) State {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.Status = StatusFinished
+	s.WinnerID = ""
+	s.FinishedReason = reason
+	s.DrawOfferedBy = ""
+	s.DrawOfferedAt = time.Time{}
+
+	return s.snapshotLocked()
 }

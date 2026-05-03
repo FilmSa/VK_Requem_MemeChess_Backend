@@ -21,7 +21,7 @@ func (r *ClassicalRuleSet) IsLegalMove(gs *position.GameState, mv position.Move)
 	}
 
 	dst := gs.PieceAt(mv.To)
-	if !dst.IsZero() && dst.Color == piece.Color {
+	if !dst.IsZero() && dst.Color == piece.Color && !(piece.Type == position.King && (mv.Kind == position.MoveCastleKingSide || mv.Kind == position.MoveCastleQueenSide)) {
 		return ErrDestinationOccupied
 	}
 
@@ -133,45 +133,57 @@ func (r *ClassicalRuleSet) validatePromotion(gs *position.GameState, mv position
 }
 
 func (r *ClassicalRuleSet) canCastleGeometry(gs *position.GameState, mv position.Move, color position.Color) bool {
-	if color == position.White {
-		if mv.From != position.MustSquare(4, 0) {
-			return false
-		}
-		if mv.Kind == position.MoveCastleKingSide {
-			if mv.To != position.MustSquare(6, 0) || !gs.CastlingRights.WhiteKingSide {
-				return false
-			}
-			return gs.PieceAt(position.MustSquare(5, 0)).IsZero() &&
-				gs.PieceAt(position.MustSquare(6, 0)).IsZero() &&
-				gs.PieceAt(position.MustSquare(7, 0)).Type == position.Rook
-		}
-		if mv.To != position.MustSquare(2, 0) || !gs.CastlingRights.WhiteQueenSide {
-			return false
-		}
-		return gs.PieceAt(position.MustSquare(1, 0)).IsZero() &&
-			gs.PieceAt(position.MustSquare(2, 0)).IsZero() &&
-			gs.PieceAt(position.MustSquare(3, 0)).IsZero() &&
-			gs.PieceAt(position.MustSquare(0, 0)).Type == position.Rook
+	layout := gs.CastlingLayoutValue()
+	if mv.From != layout.KingStart(color) || mv.To != layout.KingEnd(color, mv.Kind) {
+		return false
 	}
 
-	if mv.From != position.MustSquare(4, 7) {
-		return false
-	}
-	if mv.Kind == position.MoveCastleKingSide {
-		if mv.To != position.MustSquare(6, 7) || !gs.CastlingRights.BlackKingSide {
+	if color == position.White {
+		if mv.Kind == position.MoveCastleKingSide && !gs.CastlingRights.WhiteKingSide {
 			return false
 		}
-		return gs.PieceAt(position.MustSquare(5, 7)).IsZero() &&
-			gs.PieceAt(position.MustSquare(6, 7)).IsZero() &&
-			gs.PieceAt(position.MustSquare(7, 7)).Type == position.Rook
+		if mv.Kind == position.MoveCastleQueenSide && !gs.CastlingRights.WhiteQueenSide {
+			return false
+		}
+	} else {
+		if mv.Kind == position.MoveCastleKingSide && !gs.CastlingRights.BlackKingSide {
+			return false
+		}
+		if mv.Kind == position.MoveCastleQueenSide && !gs.CastlingRights.BlackQueenSide {
+			return false
+		}
 	}
-	if mv.To != position.MustSquare(2, 7) || !gs.CastlingRights.BlackQueenSide {
+
+	rookStart := layout.RookStart(color, mv.Kind)
+	rook := gs.PieceAt(rookStart)
+	if rook.Type != position.Rook || rook.Color != color {
 		return false
 	}
-	return gs.PieceAt(position.MustSquare(1, 7)).IsZero() &&
-		gs.PieceAt(position.MustSquare(2, 7)).IsZero() &&
-		gs.PieceAt(position.MustSquare(3, 7)).IsZero() &&
-		gs.PieceAt(position.MustSquare(0, 7)).Type == position.Rook
+
+	ignore := map[position.Square]struct{}{
+		layout.KingStart(color): {},
+		rookStart:               {},
+	}
+
+	for _, sq := range layout.KingPath(color, mv.Kind)[1:] {
+		if _, ok := ignore[sq]; ok {
+			continue
+		}
+		if !gs.PieceAt(sq).IsZero() {
+			return false
+		}
+	}
+
+	for _, sq := range layout.RookPath(color, mv.Kind)[1:] {
+		if _, ok := ignore[sq]; ok {
+			continue
+		}
+		if !gs.PieceAt(sq).IsZero() {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (r *ClassicalRuleSet) validateCastlePath(gs *position.GameState, mv position.Move, color position.Color) error {
@@ -179,25 +191,13 @@ func (r *ClassicalRuleSet) validateCastlePath(gs *position.GameState, mv positio
 		return ErrIllegalCastle
 	}
 
-	var path []position.Square
-	if color == position.White {
-		if mv.Kind == position.MoveCastleKingSide {
-			path = []position.Square{position.MustSquare(5, 0), position.MustSquare(6, 0)}
-		} else {
-			path = []position.Square{position.MustSquare(3, 0), position.MustSquare(2, 0)}
-		}
-	} else {
-		if mv.Kind == position.MoveCastleKingSide {
-			path = []position.Square{position.MustSquare(5, 7), position.MustSquare(6, 7)}
-		} else {
-			path = []position.Square{position.MustSquare(3, 7), position.MustSquare(2, 7)}
-		}
-	}
-
-	for _, sq := range path {
+	layout := gs.CastlingLayoutValue()
+	rookStart := layout.RookStart(color, mv.Kind)
+	for _, sq := range layout.KingPath(color, mv.Kind)[1:] {
 		tmp := gs.Clone()
 		king := tmp.PieceAt(mv.From)
 		tmp.SetPiece(mv.From, position.Piece{})
+		tmp.SetPiece(rookStart, position.Piece{})
 		tmp.SetPiece(sq, king)
 		if r.IsCheck(tmp, color) {
 			return ErrIllegalCastle

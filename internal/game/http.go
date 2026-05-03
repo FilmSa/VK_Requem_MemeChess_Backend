@@ -35,11 +35,16 @@ func writeAuthError(w http.ResponseWriter, err error) {
 
 type inviteCreateResponse struct {
 	GameID      string    `json:"game_id"`
+	GameMode    string    `json:"game_mode"`
 	InviteToken string    `json:"invite_token"`
 	InviteURL   string    `json:"invite_url"`
 	JoinURL     string    `json:"join_url"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	Status      string    `json:"status"`
+}
+
+type inviteCreateRequest struct {
+	GameMode string `json:"game_mode"`
 }
 
 type inviteParticipant struct {
@@ -74,6 +79,20 @@ type matchSearchRequest struct {
 	GameMode string `json:"game_mode"`
 	MinStake int64  `json:"min_stake"`
 	MaxStake int64  `json:"max_stake"`
+}
+
+type robotCreateRequest struct {
+	GameMode   string `json:"game_mode"`
+	Difficulty string `json:"difficulty"`
+}
+
+type robotCreateResponse struct {
+	GameID        string            `json:"game_id"`
+	GameMode      string            `json:"game_mode"`
+	BotDifficulty string            `json:"bot_difficulty"`
+	PlayURL       string            `json:"play_url"`
+	Status        string            `json:"status"`
+	Opponent      inviteParticipant `json:"opponent"`
 }
 
 func (h *HTTP) PostResign(w http.ResponseWriter, r *http.Request, gameID string) {
@@ -211,13 +230,33 @@ func (h *HTTP) PostInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var req inviteCreateRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
 	claims, err := h.JWT.ClaimsFromAuthorizationHeader(r.Header.Get("Authorization"))
 	if err != nil {
 		writeAuthError(w, err)
 		return
 	}
 
-	gameID, err := h.Svc.CreateInviteGame(r.Context(), claims.UserID, NewChessEngine())
+	mode := normalizeGameMode(req.GameMode)
+	if mode == "" && strings.TrimSpace(req.GameMode) != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid game_mode"})
+		return
+	}
+	if mode == "" {
+		mode = GameModeClassic
+	}
+
+	engine, err := NewChessEngineForMode(mode)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid game_mode"})
+		return
+	}
+
+	gameID, err := h.Svc.CreateInviteGameWithMode(r.Context(), mode, claims.UserID, engine)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create game"})
 		return
@@ -232,11 +271,67 @@ func (h *HTTP) PostInvite(w http.ResponseWriter, r *http.Request) {
 	inviteURL := h.JoinBase + "/invite/" + gameID
 	writeJSON(w, http.StatusCreated, inviteCreateResponse{
 		GameID:      gameID,
+		GameMode:    mode,
 		InviteToken: gameID,
 		InviteURL:   inviteURL,
 		JoinURL:     inviteURL,
 		ExpiresAt:   expiresAt,
 		Status:      string(StatusWaiting),
+	})
+}
+
+func (h *HTTP) PostRobotGame(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	participant, err := h.AuthService.UserFromBearer(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+
+	var req robotCreateRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	mode := normalizeGameMode(req.GameMode)
+	if mode == "" && strings.TrimSpace(req.GameMode) != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid game_mode"})
+		return
+	}
+	if mode == "" {
+		mode = GameModeClassic
+	}
+
+	difficulty, _, ok := normalizeBotDifficulty(req.Difficulty)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid difficulty"})
+		return
+	}
+
+	gameID, err := h.Svc.CreateBotGame(r.Context(), participant.ID, mode, difficulty)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidGameMode):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid game_mode"})
+		case errors.Is(err, ErrInvalidDifficulty):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid difficulty"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create robot game"})
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, robotCreateResponse{
+		GameID:        gameID,
+		GameMode:      mode,
+		BotDifficulty: difficulty,
+		PlayURL:       h.JoinBase + "/play?game=" + gameID,
+		Status:        string(StatusActive),
+		Opponent:      buildBotParticipant(),
 	})
 }
 
@@ -348,10 +443,16 @@ func (h *HTTP) GetParticipants(w http.ResponseWriter, r *http.Request, gameID st
 		return
 	}
 
-	player2, err := h.loadParticipant(r, snapshot.Player2ID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load player profile"})
-		return
+	var player2 *inviteParticipant
+	if snapshot.BotGame {
+		bot := buildBotParticipant()
+		player2 = &bot
+	} else {
+		player2, err = h.loadParticipant(r, snapshot.Player2ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load player profile"})
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, participantsResponse{
@@ -416,12 +517,18 @@ func (h *HTTP) PostMatchSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	engine, err := NewChessEngineForMode(req.GameMode)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid game_mode or stake range"})
+		return
+	}
+
 	result, err := h.Svc.SearchMatch(r.Context(), MatchSearchInput{
 		UserID:   participant.ID,
 		GameMode: req.GameMode,
 		MinStake: req.MinStake,
 		MaxStake: req.MaxStake,
-	}, NewChessEngine())
+	}, engine)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidStakeRange):
@@ -532,6 +639,14 @@ func buildInviteParticipant(u *user.User) inviteParticipant {
 		Username:  strings.TrimSpace(u.Username),
 		AvatarURL: u.AvatarURL,
 		IsGuest:   auth.IsGuestUsername(u.Username),
+	}
+}
+
+func buildBotParticipant() inviteParticipant {
+	return inviteParticipant{
+		ID:       botUserID,
+		Username: botDisplayName(),
+		IsGuest:  false,
 	}
 }
 

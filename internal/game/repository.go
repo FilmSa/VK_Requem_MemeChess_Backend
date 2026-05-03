@@ -26,6 +26,7 @@ type CreateGameParams struct {
 	Status            string
 	BetAmount         int64
 	MemeMode          bool
+	GameMode          string
 	FEN               string
 	CurrentTurnUserID string
 }
@@ -36,8 +37,8 @@ func (r *Repository) CreateGame(ctx context.Context, p CreateGameParams) error {
 
 	query := `
 		INSERT INTO games (
-			id, player1_id, player2_id, status, bet_amount, meme_mode, fen, current_turn_user_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			id, player1_id, player2_id, status, bet_amount, meme_mode, game_mode, fen, current_turn_user_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 
 	var player2 any
@@ -52,6 +53,7 @@ func (r *Repository) CreateGame(ctx context.Context, p CreateGameParams) error {
 		p.Status,
 		p.BetAmount,
 		p.MemeMode,
+		p.GameMode,
 		p.FEN,
 		p.CurrentTurnUserID,
 	)

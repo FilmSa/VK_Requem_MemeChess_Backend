@@ -47,6 +47,7 @@ type GameState struct {
 	Board          [64]Piece
 	SideToMove     Color
 	CastlingRights CastlingRights
+	CastlingLayout *CastlingLayout
 	EnPassant      Square
 	HalfmoveClock  int
 	FullmoveNumber int
@@ -62,6 +63,7 @@ func NewInitial() *GameState {
 			BlackKingSide:  true,
 			BlackQueenSide: true,
 		},
+		CastlingLayout: StandardCastlingLayout(),
 		EnPassant:      NoSquare,
 		HalfmoveClock:  0,
 		FullmoveNumber: 1,
@@ -80,6 +82,10 @@ func NewInitial() *GameState {
 
 func (g *GameState) Clone() *GameState {
 	cp := *g
+	if g.CastlingLayout != nil {
+		layout := *g.CastlingLayout
+		cp.CastlingLayout = &layout
+	}
 	cp.History = append([]Undo(nil), g.History...)
 	return &cp
 }
@@ -132,35 +138,23 @@ func (g *GameState) ApplyMove(m Move) error {
 		g.SetPiece(m.To, moved)
 
 	case MoveCastleKingSide:
-		g.SetPiece(m.From, Piece{})
-		g.SetPiece(m.To, moved)
-
-		if moved.Color == White {
-			undo.RookFrom = MustSquare(7, 0)
-			undo.RookTo = MustSquare(5, 0)
-		} else {
-			undo.RookFrom = MustSquare(7, 7)
-			undo.RookTo = MustSquare(5, 7)
-		}
-
+		layout := g.CastlingLayoutValue()
+		undo.RookFrom = layout.RookStart(moved.Color, m.Kind)
+		undo.RookTo = layout.RookEnd(moved.Color, m.Kind)
 		rook := g.PieceAt(undo.RookFrom)
+		g.SetPiece(m.From, Piece{})
 		g.SetPiece(undo.RookFrom, Piece{})
+		g.SetPiece(m.To, moved)
 		g.SetPiece(undo.RookTo, rook)
 
 	case MoveCastleQueenSide:
-		g.SetPiece(m.From, Piece{})
-		g.SetPiece(m.To, moved)
-
-		if moved.Color == White {
-			undo.RookFrom = MustSquare(0, 0)
-			undo.RookTo = MustSquare(3, 0)
-		} else {
-			undo.RookFrom = MustSquare(0, 7)
-			undo.RookTo = MustSquare(3, 7)
-		}
-
+		layout := g.CastlingLayoutValue()
+		undo.RookFrom = layout.RookStart(moved.Color, m.Kind)
+		undo.RookTo = layout.RookEnd(moved.Color, m.Kind)
 		rook := g.PieceAt(undo.RookFrom)
+		g.SetPiece(m.From, Piece{})
 		g.SetPiece(undo.RookFrom, Piece{})
+		g.SetPiece(m.To, moved)
 		g.SetPiece(undo.RookTo, rook)
 
 	default:
@@ -210,25 +204,25 @@ func (g *GameState) UndoMove() error {
 	g.HalfmoveClock = last.PrevHalfmove
 	g.FullmoveNumber = last.PrevFullmove
 
-	g.SetPiece(last.Move.From, last.MovedPiece)
-	g.SetPiece(last.Move.To, Piece{})
-
-	if last.Move.Kind == MoveEnPassant {
-		g.SetPiece(last.CapturedSquare, last.CapturedPiece)
-	} else {
-		g.SetPiece(last.CapturedSquare, last.CapturedPiece)
-	}
-
 	if last.Move.Kind == MoveCastleKingSide || last.Move.Kind == MoveCastleQueenSide {
 		rook := g.PieceAt(last.RookTo)
+		g.SetPiece(last.Move.To, Piece{})
 		g.SetPiece(last.RookTo, Piece{})
+		g.SetPiece(last.Move.From, last.MovedPiece)
 		g.SetPiece(last.RookFrom, rook)
+		return nil
 	}
+
+	g.SetPiece(last.Move.From, last.MovedPiece)
+	g.SetPiece(last.Move.To, Piece{})
+	g.SetPiece(last.CapturedSquare, last.CapturedPiece)
 
 	return nil
 }
 
 func (g *GameState) updateCastlingRights(m Move, moved Piece, captured Piece, capturedSquare Square) {
+	layout := g.CastlingLayoutValue()
+
 	switch moved.Type {
 	case King:
 		if moved.Color == White {
@@ -240,17 +234,17 @@ func (g *GameState) updateCastlingRights(m Move, moved Piece, captured Piece, ca
 		}
 	case Rook:
 		if moved.Color == White {
-			if m.From == MustSquare(0, 0) {
+			if m.From == layout.RookStart(White, MoveCastleQueenSide) {
 				g.CastlingRights.WhiteQueenSide = false
 			}
-			if m.From == MustSquare(7, 0) {
+			if m.From == layout.RookStart(White, MoveCastleKingSide) {
 				g.CastlingRights.WhiteKingSide = false
 			}
 		} else {
-			if m.From == MustSquare(0, 7) {
+			if m.From == layout.RookStart(Black, MoveCastleQueenSide) {
 				g.CastlingRights.BlackQueenSide = false
 			}
-			if m.From == MustSquare(7, 7) {
+			if m.From == layout.RookStart(Black, MoveCastleKingSide) {
 				g.CastlingRights.BlackKingSide = false
 			}
 		}
@@ -258,17 +252,17 @@ func (g *GameState) updateCastlingRights(m Move, moved Piece, captured Piece, ca
 
 	if captured.Type == Rook {
 		if captured.Color == White {
-			if capturedSquare == MustSquare(0, 0) {
+			if capturedSquare == layout.RookStart(White, MoveCastleQueenSide) {
 				g.CastlingRights.WhiteQueenSide = false
 			}
-			if capturedSquare == MustSquare(7, 0) {
+			if capturedSquare == layout.RookStart(White, MoveCastleKingSide) {
 				g.CastlingRights.WhiteKingSide = false
 			}
 		} else {
-			if capturedSquare == MustSquare(0, 7) {
+			if capturedSquare == layout.RookStart(Black, MoveCastleQueenSide) {
 				g.CastlingRights.BlackQueenSide = false
 			}
-			if capturedSquare == MustSquare(7, 7) {
+			if capturedSquare == layout.RookStart(Black, MoveCastleKingSide) {
 				g.CastlingRights.BlackKingSide = false
 			}
 		}

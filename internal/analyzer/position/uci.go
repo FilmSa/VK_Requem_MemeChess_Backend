@@ -7,6 +7,29 @@ import (
 
 func ParseUCIMove(gs *GameState, raw string) (Move, error) {
 	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "o-o" || raw == "0-0" {
+		if gs == nil {
+			return Move{}, fmt.Errorf("castle notation requires game state")
+		}
+		layout := gs.CastlingLayoutValue()
+		return Move{
+			From: gs.findKing(layout.KingStart(gs.SideToMove), gs.SideToMove),
+			To:   layout.KingEnd(gs.SideToMove, MoveCastleKingSide),
+			Kind: MoveCastleKingSide,
+		}, nil
+	}
+	if raw == "o-o-o" || raw == "0-0-0" {
+		if gs == nil {
+			return Move{}, fmt.Errorf("castle notation requires game state")
+		}
+		layout := gs.CastlingLayoutValue()
+		return Move{
+			From: gs.findKing(layout.KingStart(gs.SideToMove), gs.SideToMove),
+			To:   layout.KingEnd(gs.SideToMove, MoveCastleQueenSide),
+			Kind: MoveCastleQueenSide,
+		}, nil
+	}
+
 	if len(raw) != 4 && len(raw) != 5 {
 		return Move{}, fmt.Errorf("invalid uci move: %q", raw)
 	}
@@ -55,13 +78,16 @@ func ParseUCIMove(gs *GameState, raw string) (Move, error) {
 		return Move{}, fmt.Errorf("no piece at source square %s", from)
 	}
 
-	if piece.Type == King && from.Rank() == to.Rank() && absInt(to.File()-from.File()) == 2 {
-		if to.File() > from.File() {
+	layout := gs.CastlingLayoutValue()
+	if piece.Type == King && from == layout.KingStart(piece.Color) {
+		if to == layout.KingEnd(piece.Color, MoveCastleKingSide) {
 			move.Kind = MoveCastleKingSide
-		} else {
-			move.Kind = MoveCastleQueenSide
+			move.Promotion = NoPieceType
 		}
-		move.Promotion = NoPieceType
+		if to == layout.KingEnd(piece.Color, MoveCastleQueenSide) {
+			move.Kind = MoveCastleQueenSide
+			move.Promotion = NoPieceType
+		}
 	}
 
 	if piece.Type == Pawn && move.Kind != MovePromotion && from.File() != to.File() && gs.PieceAt(to).IsZero() && gs.EnPassant == to {
@@ -69,6 +95,22 @@ func ParseUCIMove(gs *GameState, raw string) (Move, error) {
 	}
 
 	return move, nil
+}
+
+func (g *GameState) findKing(expected Square, color Color) Square {
+	if piece := g.PieceAt(expected); !piece.IsZero() && piece.Type == King && piece.Color == color {
+		return expected
+	}
+
+	for i := 0; i < 64; i++ {
+		sq := Square(i)
+		piece := g.PieceAt(sq)
+		if !piece.IsZero() && piece.Type == King && piece.Color == color {
+			return sq
+		}
+	}
+
+	return expected
 }
 
 func BuildGameStateFromUCIMoves(moves []string) (*GameState, error) {

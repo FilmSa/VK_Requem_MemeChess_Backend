@@ -227,16 +227,17 @@ func genKingMoves(gs *position.GameState, from position.Square, color position.C
 		}
 	}
 
-	if color == position.White && from == position.MustSquare(4, 0) {
+	layout := gs.CastlingLayoutValue()
+	if color == position.White && from == layout.KingStart(position.White) {
 		moves = append(moves,
-			position.Move{From: from, To: position.MustSquare(6, 0), Kind: position.MoveCastleKingSide},
-			position.Move{From: from, To: position.MustSquare(2, 0), Kind: position.MoveCastleQueenSide},
+			position.Move{From: from, To: layout.KingEnd(position.White, position.MoveCastleKingSide), Kind: position.MoveCastleKingSide},
+			position.Move{From: from, To: layout.KingEnd(position.White, position.MoveCastleQueenSide), Kind: position.MoveCastleQueenSide},
 		)
 	}
-	if color == position.Black && from == position.MustSquare(4, 7) {
+	if color == position.Black && from == layout.KingStart(position.Black) {
 		moves = append(moves,
-			position.Move{From: from, To: position.MustSquare(6, 7), Kind: position.MoveCastleKingSide},
-			position.Move{From: from, To: position.MustSquare(2, 7), Kind: position.MoveCastleQueenSide},
+			position.Move{From: from, To: layout.KingEnd(position.Black, position.MoveCastleKingSide), Kind: position.MoveCastleKingSide},
+			position.Move{From: from, To: layout.KingEnd(position.Black, position.MoveCastleQueenSide), Kind: position.MoveCastleQueenSide},
 		)
 	}
 

@@ -1,63 +1,51 @@
 package game
 
-import (
-	"strings"
-
-	"github.com/notnil/chess"
-)
+type engineRuntime interface {
+	CurrentFEN() string
+	ApplyMove(move string) (MoveResult, error)
+}
 
 type ChessEngine struct {
-	game     *chess.Game
-	notation chess.UCINotation
+	runtime engineRuntime
 }
 
 func NewChessEngine() *ChessEngine {
-	return &ChessEngine{
-		game:     chess.NewGame(),
-		notation: chess.UCINotation{},
+	engine, err := NewChessEngineForMode(GameModeClassic)
+	if err != nil {
+		panic(err)
 	}
+	return engine
+}
+
+func NewChessEngineForMode(mode string) (*ChessEngine, error) {
+	return newChessEngineForMode(mode, cryptoRandomizer{})
+}
+
+func newChessEngineForMode(mode string, rng randomizer) (*ChessEngine, error) {
+	runtime, err := newEngineRuntime(mode, rng)
+	if err != nil {
+		return nil, err
+	}
+	return &ChessEngine{runtime: runtime}, nil
 }
 
 func (e *ChessEngine) CurrentFEN() string {
-	return e.game.Position().String()
+	return e.runtime.CurrentFEN()
 }
 
 func (e *ChessEngine) ApplyMove(uciMove string) (MoveResult, error) {
-	uciMove = strings.TrimSpace(strings.ToLower(uciMove))
-	if uciMove == "" {
-		return MoveResult{}, ErrInvalidMove
+	return e.runtime.ApplyMove(uciMove)
+}
+
+func (e *ChessEngine) LegalMoves() []string {
+	type legalMoveProvider interface {
+		LegalMoves() []string
 	}
 
-	beforePos := e.game.Position()
-	beforeBoard := beforePos.Board()
-
-	move, err := e.notation.Decode(beforePos, uciMove)
-	if err != nil {
-		return MoveResult{}, ErrInvalidMove
+	provider, ok := e.runtime.(legalMoveProvider)
+	if !ok {
+		return nil
 	}
 
-	san := chess.AlgebraicNotation{}.Encode(beforePos, move)
-
-	isCapture := beforeBoard.Piece(move.S2()) != chess.NoPiece
-	isCheck := strings.HasSuffix(san, "+")
-	isCheckmateByNotation := strings.HasSuffix(san, "#")
-
-	if err := e.game.Move(move); err != nil {
-		return MoveResult{}, ErrInvalidMove
-	}
-
-	fen := e.game.Position().String()
-
-	outcome := e.game.Outcome()
-	method := e.game.Method()
-
-	isCheckmate := isCheckmateByNotation || (outcome != chess.NoOutcome && method == chess.Checkmate)
-
-	return MoveResult{
-		FEN:         fen,
-		Move:        uciMove,
-		IsCapture:   isCapture,
-		IsCheck:     isCheck,
-		IsCheckmate: isCheckmate,
-	}, nil
+	return provider.LegalMoves()
 }

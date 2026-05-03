@@ -96,6 +96,7 @@ func main() {
 	registerAuthRoutes(authHandlers)
 	http.Handle("/api/v1/", analyzerHTTP)
 	http.HandleFunc("/api/v1/games/invite", gameHTTP.PostInvite)
+	http.HandleFunc("/api/v1/games/robot", gameHTTP.PostRobotGame)
 	http.HandleFunc("/api/v1/games/match-search", gameHTTP.PostMatchSearch)
 	http.HandleFunc("/api/v1/games/match-search/preview", gameHTTP.PostMatchSearchPreview)
 	http.HandleFunc("/api/v1/games/match-search/leave", gameHTTP.PostMatchSearchLeave)

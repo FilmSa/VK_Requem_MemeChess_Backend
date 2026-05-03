@@ -21,6 +21,8 @@ var (
 	ErrGameFinished      = errors.New("game already finished")
 	ErrGameNotActive     = errors.New("game is not active")
 	ErrInvalidMove       = errors.New("invalid move")
+	ErrInvalidGameMode   = errors.New("invalid game mode")
+	ErrInvalidDifficulty = errors.New("invalid bot difficulty")
 	ErrInviteExpired     = errors.New("invite token expired")
 	ErrInviteUsed        = errors.New("invite token already used")
 	ErrInviteOwnGame     = errors.New("host cannot join own invite")
@@ -31,6 +33,11 @@ const defaultInviteTTL = 15 * time.Minute
 
 type State struct {
 	GameID              string    `json:"game_id"`
+	GameMode            string    `json:"game_mode"`
+	BotGame             bool      `json:"bot_game,omitempty"`
+	BotDifficulty       string    `json:"bot_difficulty,omitempty"`
+	InitialFEN          string    `json:"initial_fen,omitempty"`
+	LegalMoves          []string  `json:"legal_moves,omitempty"`
 	Player1ID           string    `json:"player1_id"`
 	Player2ID           string    `json:"player2_id"`
 	Player1Connected    bool      `json:"player1_connected"`
@@ -122,10 +129,19 @@ func (s *Service) SetMoveAnalyzer(moveAnalyzer MoveAnalyzer) {
 }
 
 func (s *Service) CreateGame(ctx context.Context, gameID, player1ID, player2ID string, engine Engine) (*Session, error) {
+	return s.CreateGameWithMode(ctx, gameID, GameModeClassic, player1ID, player2ID, engine)
+}
+
+func (s *Service) CreateGameWithMode(ctx context.Context, gameID, gameMode, player1ID, player2ID string, engine Engine) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	session := NewSession(gameID, player1ID, player2ID, 0, engine)
+	mode := normalizeGameMode(gameMode)
+	if mode == "" {
+		return nil, ErrInvalidStakeRange
+	}
+
+	session := NewSession(gameID, mode, player1ID, player2ID, 0, engine)
 	s.trackSessionVariantLocked(session)
 	s.sessions[gameID] = session
 
@@ -138,6 +154,7 @@ func (s *Service) CreateGame(ctx context.Context, gameID, player1ID, player2ID s
 			Status:            string(session.Status),
 			BetAmount:         0,
 			MemeMode:          false,
+			GameMode:          mode,
 			FEN:               session.FEN,
 			CurrentTurnUserID: session.CurrentTurnUserID,
 		})
@@ -156,6 +173,10 @@ func (s *Service) CreateGame(ctx context.Context, gameID, player1ID, player2ID s
 }
 
 func (s *Service) CreateInviteGame(ctx context.Context, hostUserID string, engine Engine) (gameID string, err error) {
+	return s.CreateInviteGameWithMode(ctx, GameModeClassic, hostUserID, engine)
+}
+
+func (s *Service) CreateInviteGameWithMode(ctx context.Context, gameMode, hostUserID string, engine Engine) (gameID string, err error) {
 	id, err := newGameID()
 	if err != nil {
 		return "", err
@@ -168,7 +189,12 @@ func (s *Service) CreateInviteGame(ctx context.Context, hostUserID string, engin
 		return "", errors.New("game id collision")
 	}
 
-	session := NewSession(id, hostUserID, "", 0, engine)
+	mode := normalizeGameMode(gameMode)
+	if mode == "" {
+		return "", ErrInvalidStakeRange
+	}
+
+	session := NewSession(id, mode, hostUserID, "", 0, engine)
 	session.InviteExpiresAt = time.Now().Add(defaultInviteTTL)
 	s.trackSessionVariantLocked(session)
 	s.sessions[id] = session
@@ -181,6 +207,7 @@ func (s *Service) CreateInviteGame(ctx context.Context, hostUserID string, engin
 			Status:            string(session.Status),
 			BetAmount:         0,
 			MemeMode:          false,
+			GameMode:          mode,
 			FEN:               session.FEN,
 			CurrentTurnUserID: session.CurrentTurnUserID,
 		})
@@ -190,6 +217,49 @@ func (s *Service) CreateInviteGame(ctx context.Context, hostUserID string, engin
 			return "", err
 		}
 	}
+
+	if s.moveAnalyzer != nil {
+		s.moveAnalyzer.StartGame(id)
+	}
+
+	return id, nil
+}
+
+func (s *Service) CreateBotGame(ctx context.Context, playerID, gameMode, difficulty string) (string, error) {
+	if strings.TrimSpace(playerID) == "" {
+		return "", ErrForbidden
+	}
+
+	mode := normalizeGameMode(gameMode)
+	if mode == "" {
+		return "", ErrInvalidGameMode
+	}
+
+	normalizedDifficulty, _, ok := normalizeBotDifficulty(difficulty)
+	if !ok {
+		return "", ErrInvalidDifficulty
+	}
+
+	engine, err := NewChessEngineForMode(mode)
+	if err != nil {
+		return "", ErrInvalidGameMode
+	}
+
+	id, err := newGameID()
+	if err != nil {
+		return "", err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.sessions[id]; exists {
+		return "", errors.New("game id collision")
+	}
+
+	session := NewBotSession(id, mode, playerID, normalizedDifficulty, engine)
+	s.trackSessionVariantLocked(session)
+	s.sessions[id] = session
 
 	if s.moveAnalyzer != nil {
 		s.moveAnalyzer.StartGame(id)
@@ -355,7 +425,7 @@ func (s *Service) createMatchedGame(ctx context.Context, player1ID, player2ID st
 		return "", errors.New("game id collision")
 	}
 
-	session := NewSession(id, player1ID, player2ID, stake, engine)
+	session := NewSession(id, mode, player1ID, player2ID, stake, engine)
 	s.trackSessionVariantLocked(session)
 	s.sessions[id] = session
 
@@ -368,6 +438,7 @@ func (s *Service) createMatchedGame(ctx context.Context, player1ID, player2ID st
 			Status:            string(session.Status),
 			BetAmount:         stake,
 			MemeMode:          mode == "meme",
+			GameMode:          mode,
 			FEN:               session.FEN,
 			CurrentTurnUserID: session.CurrentTurnUserID,
 		})
@@ -383,16 +454,6 @@ func (s *Service) createMatchedGame(ctx context.Context, player1ID, player2ID st
 	}
 
 	return id, nil
-}
-
-func normalizeGameMode(mode string) string {
-	normalized := strings.ToLower(strings.TrimSpace(mode))
-	switch normalized {
-	case "meme", "classic":
-		return normalized
-	default:
-		return ""
-	}
 }
 
 func rangesOverlap(minA, maxA, minB, maxB int64) bool {
@@ -532,7 +593,7 @@ func (s *Service) MakeMove(ctx context.Context, gameID, userID, move string) (St
 	session.SetVariantCursor(cursor.RootPositionHash, cursor.CurrentPositionHash, cursor.Ply)
 	state = session.Snapshot()
 
-	if s.repository != nil {
+	if s.repository != nil && !session.IsBotGame() {
 		moveNumber := len(state.Moves)
 
 		if err := s.repository.SaveMove(ctx, SaveMoveParams{
@@ -584,6 +645,47 @@ func (s *Service) MakeMove(ctx context.Context, gameID, userID, move string) (St
 	}
 
 	return state, result, nil
+}
+
+func (s *Service) PlayBotTurn(ctx context.Context, gameID string) (State, MoveResult, bool, error) {
+	session, ok := s.GetSession(gameID)
+	if !ok {
+		return State{}, MoveResult{}, false, ErrGameNotFound
+	}
+	if !session.IsBotGame() {
+		return session.Snapshot(), MoveResult{}, false, nil
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.Status != string(StatusActive) || snapshot.CurrentTurnUserID != botUserID {
+		return snapshot, MoveResult{}, false, nil
+	}
+
+	move, err := chooseBotMove(session.engine, snapshot.BotDifficulty)
+	if err != nil {
+		if errors.Is(err, errNoLegalBotMove) {
+			return session.FinishDraw("stalemate"), MoveResult{}, false, nil
+		}
+		return State{}, MoveResult{}, false, err
+	}
+
+	state, result, err := session.ApplyMove(botUserID, move)
+	if err != nil {
+		return State{}, MoveResult{}, false, err
+	}
+
+	cursor, err := s.variantTracker.AdvanceGame(gameID, result.Move, state.FEN)
+	if err != nil {
+		return State{}, MoveResult{}, false, err
+	}
+	session.SetVariantCursor(cursor.RootPositionHash, cursor.CurrentPositionHash, cursor.Ply)
+	state = session.Snapshot()
+
+	if s.moveAnalyzer != nil {
+		s.moveAnalyzer.RecordMove(gameID, result.Move)
+	}
+
+	return state, result, true, nil
 }
 
 func (s *Service) trackSessionVariantLocked(session *Session) {
@@ -678,6 +780,9 @@ func (s *Service) AcceptDraw(ctx context.Context, gameID, userID string) (State,
 }
 
 func (s *Service) persistFinishedState(ctx context.Context, state State) error {
+	if isBotUserID(state.Player2ID) {
+		return nil
+	}
 	if s.repository == nil {
 		return nil
 	}
@@ -709,6 +814,9 @@ func (s *Service) persistFinishedState(ctx context.Context, state State) error {
 }
 
 func (s *Service) persistNonTerminalState(ctx context.Context, state State) error {
+	if isBotUserID(state.Player2ID) {
+		return nil
+	}
 	if s.repository == nil {
 		return nil
 	}

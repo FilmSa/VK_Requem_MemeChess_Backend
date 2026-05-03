@@ -380,44 +380,33 @@ func (c *Client) handleGameMove(msg IncomingMessage) {
 		Payload: state,
 	})
 
-	if result.IsCapture {
+	c.broadcastMoveOutcome(payload.GameID, c.userID, state, result)
+
+	botState, botResult, moved, err := c.gameService.PlayBotTurn(context.Background(), payload.GameID)
+	if err != nil {
+		c.sendError("", "BOT_MOVE_FAILED", "failed to compute bot move")
+		return
+	}
+	if moved {
 		c.broadcastJSON(payload.GameID, OutgoingMessage{
-			Type: "game.event.capture",
-			Payload: map[string]string{
-				"game_id":    payload.GameID,
-				"by_user_id": c.userID,
-				"move":       result.Move,
-			},
+			Type:    "game.state",
+			Payload: botState,
 		})
+		c.broadcastMoveOutcome(payload.GameID, botState.Player2ID, botState, botResult)
+		return
 	}
 
-	if result.IsCheck {
+	if botState.Status == string(game.StatusFinished) && botState.FinishedReason == "stalemate" {
 		c.broadcastJSON(payload.GameID, OutgoingMessage{
-			Type: "game.event.check",
-			Payload: map[string]string{
-				"game_id":    payload.GameID,
-				"by_user_id": c.userID,
-				"move":       result.Move,
-			},
+			Type:    "game.state",
+			Payload: botState,
 		})
-	}
-
-	if result.IsCheckmate {
-		c.broadcastJSON(payload.GameID, OutgoingMessage{
-			Type: "game.event.checkmate",
-			Payload: map[string]string{
-				"game_id":    payload.GameID,
-				"by_user_id": c.userID,
-				"move":       result.Move,
-			},
-		})
-
 		c.broadcastJSON(payload.GameID, OutgoingMessage{
 			Type: "game.finished",
 			Payload: map[string]string{
 				"game_id":         payload.GameID,
-				"winner_id":       state.WinnerID,
-				"finished_reason": state.FinishedReason,
+				"winner_id":       botState.WinnerID,
+				"finished_reason": botState.FinishedReason,
 			},
 		})
 	}
@@ -561,6 +550,50 @@ func (c *Client) broadcastGameState(gameID string) {
 		Type:    "game.state",
 		Payload: session.Snapshot(),
 	})
+}
+
+func (c *Client) broadcastMoveOutcome(gameID string, actorUserID string, state game.State, result game.MoveResult) {
+	if result.IsCapture {
+		c.broadcastJSON(gameID, OutgoingMessage{
+			Type: "game.event.capture",
+			Payload: map[string]string{
+				"game_id":    gameID,
+				"by_user_id": actorUserID,
+				"move":       result.Move,
+			},
+		})
+	}
+
+	if result.IsCheck {
+		c.broadcastJSON(gameID, OutgoingMessage{
+			Type: "game.event.check",
+			Payload: map[string]string{
+				"game_id":    gameID,
+				"by_user_id": actorUserID,
+				"move":       result.Move,
+			},
+		})
+	}
+
+	if result.IsCheckmate {
+		c.broadcastJSON(gameID, OutgoingMessage{
+			Type: "game.event.checkmate",
+			Payload: map[string]string{
+				"game_id":    gameID,
+				"by_user_id": actorUserID,
+				"move":       result.Move,
+			},
+		})
+
+		c.broadcastJSON(gameID, OutgoingMessage{
+			Type: "game.finished",
+			Payload: map[string]string{
+				"game_id":         gameID,
+				"winner_id":       state.WinnerID,
+				"finished_reason": state.FinishedReason,
+			},
+		})
+	}
 }
 
 func (c *Client) broadcastJSON(gameID string, v interface{}) {
