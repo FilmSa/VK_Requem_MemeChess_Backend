@@ -261,6 +261,124 @@ func TestCheckmate_FoolsMate(t *testing.T) {
 	}
 }
 
+func TestTimeout_FinishesTimedGame(t *testing.T) {
+	svc := NewService(nil)
+
+	_, err := svc.CreateGameWithTimeControl(
+		context.Background(),
+		"timed-game",
+		GameModeClassic,
+		"user1",
+		"user2",
+		NewChessEngine(),
+		"bullet",
+	)
+	if err != nil {
+		t.Fatalf("create timed game: %v", err)
+	}
+
+	_, err = svc.JoinGame(context.Background(), "timed-game", "user1")
+	if err != nil {
+		t.Fatalf("join user1: %v", err)
+	}
+	_, err = svc.JoinGame(context.Background(), "timed-game", "user2")
+	if err != nil {
+		t.Fatalf("join user2: %v", err)
+	}
+
+	session, ok := svc.GetSession("timed-game")
+	if !ok {
+		t.Fatal("expected timed game session")
+	}
+
+	session.mu.Lock()
+	session.Player1RemainingMs = 0
+	session.CurrentTurnStartedAt = time.Now().Add(-2 * time.Second)
+	session.mu.Unlock()
+
+	state, err := svc.Timeout(context.Background(), "timed-game", "user2")
+	if err != nil {
+		t.Fatalf("timeout failed: %v", err)
+	}
+	if state.Status != string(StatusFinished) {
+		t.Fatalf("expected finished status, got %q", state.Status)
+	}
+	if state.WinnerID != "user2" {
+		t.Fatalf("expected user2 to win on timeout, got %q", state.WinnerID)
+	}
+	if state.FinishedReason != "timeout" {
+		t.Fatalf("expected timeout reason, got %q", state.FinishedReason)
+	}
+}
+
+func TestTimedGameClockStartsAfterSecondPlayerFirstMove(t *testing.T) {
+	svc := NewService(nil)
+
+	_, err := svc.CreateGameWithTimeControl(
+		context.Background(),
+		"delayed-clock-game",
+		GameModeClassic,
+		"user1",
+		"user2",
+		NewChessEngine(),
+		"rapid",
+	)
+	if err != nil {
+		t.Fatalf("create timed game: %v", err)
+	}
+
+	_, err = svc.JoinGame(context.Background(), "delayed-clock-game", "user1")
+	if err != nil {
+		t.Fatalf("join user1: %v", err)
+	}
+	_, err = svc.JoinGame(context.Background(), "delayed-clock-game", "user2")
+	if err != nil {
+		t.Fatalf("join user2: %v", err)
+	}
+
+	session, ok := svc.GetSession("delayed-clock-game")
+	if !ok {
+		t.Fatal("expected timed game session")
+	}
+
+	initial := session.Snapshot()
+	if !initial.CurrentTurnStartedAt.IsZero() {
+		t.Fatal("expected clock to stay idle until the second player makes the first move")
+	}
+	if initial.Player1RemainingMs != 15*60*1000 {
+		t.Fatalf("expected full initial time for player1, got %d", initial.Player1RemainingMs)
+	}
+	if initial.Player2RemainingMs != 15*60*1000 {
+		t.Fatalf("expected full initial time for player2, got %d", initial.Player2RemainingMs)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	afterWhiteMove, _, err := svc.MakeMove(context.Background(), "delayed-clock-game", "user1", "e2e4")
+	if err != nil {
+		t.Fatalf("white first move failed: %v", err)
+	}
+	if !afterWhiteMove.CurrentTurnStartedAt.IsZero() {
+		t.Fatal("expected clock to remain idle after the first player's opening move")
+	}
+	if afterWhiteMove.Player1RemainingMs != initial.Player1RemainingMs {
+		t.Fatalf("expected player1 time to remain unchanged before clock start, got %d", afterWhiteMove.Player1RemainingMs)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	afterBlackMove, _, err := svc.MakeMove(context.Background(), "delayed-clock-game", "user2", "e7e5")
+	if err != nil {
+		t.Fatalf("black first move failed: %v", err)
+	}
+	if afterBlackMove.CurrentTurnStartedAt.IsZero() {
+		t.Fatal("expected clock to start after the second player's first move")
+	}
+	if afterBlackMove.Player2RemainingMs != initial.Player2RemainingMs {
+		t.Fatalf("expected player2 time to remain unchanged before clock start, got %d", afterBlackMove.Player2RemainingMs)
+	}
+}
+
 func TestGameTracksVariantRootOnCreate(t *testing.T) {
 	svc := newTestServiceWithGame()
 
@@ -361,10 +479,11 @@ func TestSearchMatch_InvalidRange(t *testing.T) {
 	svc := NewService(nil)
 
 	_, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "classic",
-		MinStake: 20,
-		MaxStake: 10,
+		UserID:        "u1",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      20,
+		MaxStake:      10,
 	}, NewChessEngine())
 	if err != ErrInvalidStakeRange {
 		t.Fatalf("expected ErrInvalidStakeRange, got %v", err)
@@ -375,10 +494,11 @@ func TestSearchMatch_FirstPlayerQueued(t *testing.T) {
 	svc := NewService(nil)
 
 	result, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "classic",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u1",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("search match failed: %v", err)
@@ -396,20 +516,22 @@ func TestSearchMatch_RequiresSameModeAndOverlappingRange(t *testing.T) {
 	svc := NewService(nil)
 
 	_, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "meme",
-		MinStake: 10,
-		MaxStake: 30,
+		UserID:        "u1",
+		GameMode:      "meme",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      30,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("queue first player: %v", err)
 	}
 
 	result, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u2",
-		GameMode: "classic",
-		MinStake: 15,
-		MaxStake: 25,
+		UserID:        "u2",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      15,
+		MaxStake:      25,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("search second player: %v", err)
@@ -419,10 +541,11 @@ func TestSearchMatch_RequiresSameModeAndOverlappingRange(t *testing.T) {
 	}
 
 	result, err = svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u3",
-		GameMode: "meme",
-		MinStake: 31,
-		MaxStake: 60,
+		UserID:        "u3",
+		GameMode:      "meme",
+		TimeControlID: "rapid",
+		MinStake:      31,
+		MaxStake:      60,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("search third player: %v", err)
@@ -432,24 +555,55 @@ func TestSearchMatch_RequiresSameModeAndOverlappingRange(t *testing.T) {
 	}
 }
 
-func TestSearchMatch_MatchesOnOverlap(t *testing.T) {
+func TestSearchMatch_RequiresSameTimeControl(t *testing.T) {
 	svc := NewService(nil)
 
 	_, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "meme",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u1",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      30,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("queue first player: %v", err)
 	}
 
 	result, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u2",
-		GameMode: "meme",
-		MinStake: 40,
-		MaxStake: 100,
+		UserID:        "u2",
+		GameMode:      "classic",
+		TimeControlID: "bullet",
+		MinStake:      10,
+		MaxStake:      30,
+	}, NewChessEngine())
+	if err != nil {
+		t.Fatalf("queue second player: %v", err)
+	}
+	if result.Status != "queued" {
+		t.Fatalf("expected queued when time control differs, got %q", result.Status)
+	}
+}
+
+func TestSearchMatch_MatchesOnOverlap(t *testing.T) {
+	svc := NewService(nil)
+
+	_, err := svc.SearchMatch(context.Background(), MatchSearchInput{
+		UserID:        "u1",
+		GameMode:      "meme",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
+	}, NewChessEngine())
+	if err != nil {
+		t.Fatalf("queue first player: %v", err)
+	}
+
+	result, err := svc.SearchMatch(context.Background(), MatchSearchInput{
+		UserID:        "u2",
+		GameMode:      "meme",
+		TimeControlID: "rapid",
+		MinStake:      40,
+		MaxStake:      100,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("match second player: %v", err)
@@ -470,6 +624,9 @@ func TestSearchMatch_MatchesOnOverlap(t *testing.T) {
 	if result.GameCurrency != "game_currency" {
 		t.Fatalf("expected game_currency marker, got %q", result.GameCurrency)
 	}
+	if result.TimeControlID != "rapid" {
+		t.Fatalf("expected rapid time control, got %q", result.TimeControlID)
+	}
 
 	session, ok := svc.GetSession(result.GameID)
 	if !ok {
@@ -485,30 +642,33 @@ func TestSearchMatch_ReturnsPendingMatchToFirstPlayer(t *testing.T) {
 	svc := NewService(nil)
 
 	_, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "meme",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u1",
+		GameMode:      "meme",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("queue first player: %v", err)
 	}
 
 	secondResult, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u2",
-		GameMode: "meme",
-		MinStake: 40,
-		MaxStake: 100,
+		UserID:        "u2",
+		GameMode:      "meme",
+		TimeControlID: "rapid",
+		MinStake:      40,
+		MaxStake:      100,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("match second player: %v", err)
 	}
 
 	firstResult, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "meme",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u1",
+		GameMode:      "meme",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("resume first player polling: %v", err)
@@ -532,20 +692,22 @@ func TestLeaveMatchSearch_ClearsPendingMatch(t *testing.T) {
 	svc := NewService(nil)
 
 	_, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "classic",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u1",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("queue first player: %v", err)
 	}
 
 	_, err = svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u2",
-		GameMode: "classic",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u2",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("match second player: %v", err)
@@ -557,10 +719,11 @@ func TestLeaveMatchSearch_ClearsPendingMatch(t *testing.T) {
 	}
 
 	nextResult, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "classic",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u1",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("restart search after clearing pending match: %v", err)
@@ -575,10 +738,11 @@ func TestLeaveMatchSearch_RemovesQueuedPlayer(t *testing.T) {
 	svc := NewService(nil)
 
 	_, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "classic",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u1",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("queue player: %v", err)
@@ -591,10 +755,11 @@ func TestLeaveMatchSearch_RemovesQueuedPlayer(t *testing.T) {
 
 	// If u1 was removed from queue, u2 should not be matched and should become queued.
 	next, err := svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u2",
-		GameMode: "classic",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u2",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
 	}, NewChessEngine())
 	if err != nil {
 		t.Fatalf("search after leave: %v", err)
@@ -617,29 +782,33 @@ func TestPreviewMatchSearch_CountsOverlappingUsersWithSameMode(t *testing.T) {
 	svc := NewService(nil)
 
 	_, _ = svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "classic",
-		MinStake: 10,
-		MaxStake: 20,
+		UserID:        "u1",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      20,
 	}, NewChessEngine())
 	_, _ = svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u2",
-		GameMode: "classic",
-		MinStake: 30,
-		MaxStake: 40,
+		UserID:        "u2",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      30,
+		MaxStake:      40,
 	}, NewChessEngine())
 	_, _ = svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u3",
-		GameMode: "meme",
-		MinStake: 10,
-		MaxStake: 100,
+		UserID:        "u3",
+		GameMode:      "meme",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      100,
 	}, NewChessEngine())
 
 	preview, err := svc.PreviewMatchSearch(MatchSearchPreviewInput{
-		UserID:   "u4",
-		GameMode: "classic",
-		MinStake: 15,
-		MaxStake: 35,
+		UserID:        "u4",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      15,
+		MaxStake:      35,
 	})
 	if err != nil {
 		t.Fatalf("preview failed: %v", err)
@@ -656,17 +825,19 @@ func TestPreviewMatchSearch_ExcludesCurrentUserQueueEntry(t *testing.T) {
 	svc := NewService(nil)
 
 	_, _ = svc.SearchMatch(context.Background(), MatchSearchInput{
-		UserID:   "u1",
-		GameMode: "classic",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u1",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
 	}, NewChessEngine())
 
 	preview, err := svc.PreviewMatchSearch(MatchSearchPreviewInput{
-		UserID:   "u1",
-		GameMode: "classic",
-		MinStake: 10,
-		MaxStake: 50,
+		UserID:        "u1",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      10,
+		MaxStake:      50,
 	})
 	if err != nil {
 		t.Fatalf("preview failed: %v", err)
@@ -680,10 +851,11 @@ func TestPreviewMatchSearch_InvalidRange(t *testing.T) {
 	svc := NewService(nil)
 
 	_, err := svc.PreviewMatchSearch(MatchSearchPreviewInput{
-		UserID:   "u1",
-		GameMode: "classic",
-		MinStake: 50,
-		MaxStake: 10,
+		UserID:        "u1",
+		GameMode:      "classic",
+		TimeControlID: "rapid",
+		MinStake:      50,
+		MaxStake:      10,
 	})
 	if err != ErrInvalidStakeRange {
 		t.Fatalf("expected ErrInvalidStakeRange, got %v", err)

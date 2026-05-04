@@ -362,6 +362,20 @@ func (c *Client) handleGameMove(msg IncomingMessage) {
 
 	state, result, err := c.gameService.MakeMove(context.Background(), payload.GameID, c.userID, payload.Move)
 	if err != nil {
+		if errors.Is(err, game.ErrTimeExpired) {
+			c.broadcastJSON(payload.GameID, OutgoingMessage{
+				Type:    "game.state",
+				Payload: state,
+			})
+			c.broadcastJSON(payload.GameID, OutgoingMessage{
+				Type: "game.finished",
+				Payload: map[string]string{
+					"game_id":         payload.GameID,
+					"winner_id":       state.WinnerID,
+					"finished_reason": state.FinishedReason,
+				},
+			})
+		}
 		c.sendGameError(msg.RequestID, err)
 		return
 	}
@@ -627,6 +641,8 @@ func (c *Client) sendGameError(requestID string, err error) {
 		c.sendError(requestID, "GAME_NOT_ACTIVE", "game is not active yet")
 	case errors.Is(err, game.ErrInvalidMove):
 		c.sendError(requestID, "INVALID_MOVE", "invalid move")
+	case errors.Is(err, game.ErrTimeExpired):
+		c.sendError(requestID, "TIME_EXPIRED", "your time has expired")
 	default:
 		c.sendError(requestID, "INTERNAL_ERROR", "internal error")
 	}

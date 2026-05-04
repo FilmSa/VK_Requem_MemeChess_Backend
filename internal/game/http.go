@@ -12,11 +12,13 @@ import (
 )
 
 type HTTP struct {
-	Svc         *Service
-	JWT         *auth.JWTManager
-	AuthService *auth.Service
-	UserRepo    *user.Repository
-	JoinBase    string // e.g. http://localhost:5173
+	Svc               *Service
+	JWT               *auth.JWTManager
+	AuthService       *auth.Service
+	UserRepo          *user.Repository
+	JoinBase          string // e.g. http://localhost:5173
+	BroadcastState    func(string, State)
+	BroadcastFinished func(string, State)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -34,17 +36,19 @@ func writeAuthError(w http.ResponseWriter, err error) {
 }
 
 type inviteCreateResponse struct {
-	GameID      string    `json:"game_id"`
-	GameMode    string    `json:"game_mode"`
-	InviteToken string    `json:"invite_token"`
-	InviteURL   string    `json:"invite_url"`
-	JoinURL     string    `json:"join_url"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	Status      string    `json:"status"`
+	GameID        string    `json:"game_id"`
+	GameMode      string    `json:"game_mode"`
+	TimeControlID string    `json:"time_control_id,omitempty"`
+	InviteToken   string    `json:"invite_token"`
+	InviteURL     string    `json:"invite_url"`
+	JoinURL       string    `json:"join_url"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	Status        string    `json:"status"`
 }
 
 type inviteCreateRequest struct {
-	GameMode string `json:"game_mode"`
+	GameMode      string `json:"game_mode"`
+	TimeControlID string `json:"time_control_id"`
 }
 
 type inviteParticipant struct {
@@ -76,9 +80,10 @@ type moveAnalysisRequest struct {
 }
 
 type matchSearchRequest struct {
-	GameMode string `json:"game_mode"`
-	MinStake int64  `json:"min_stake"`
-	MaxStake int64  `json:"max_stake"`
+	GameMode      string `json:"game_mode"`
+	TimeControlID string `json:"time_control_id"`
+	MinStake      int64  `json:"min_stake"`
+	MaxStake      int64  `json:"max_stake"`
 }
 
 type robotCreateRequest struct {
@@ -256,9 +261,20 @@ func (h *HTTP) PostInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gameID, err := h.Svc.CreateInviteGameWithMode(r.Context(), mode, claims.UserID, engine)
+	timeControlID := normalizeTimeControlID(req.TimeControlID)
+	if timeControlID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid time_control_id"})
+		return
+	}
+
+	gameID, err := h.Svc.CreateInviteGameWithTimeControl(r.Context(), mode, claims.UserID, engine, timeControlID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create game"})
+		switch {
+		case errors.Is(err, ErrInvalidTimeControl):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid time_control_id"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create game"})
+		}
 		return
 	}
 
@@ -270,13 +286,14 @@ func (h *HTTP) PostInvite(w http.ResponseWriter, r *http.Request) {
 
 	inviteURL := h.JoinBase + "/invite/" + gameID
 	writeJSON(w, http.StatusCreated, inviteCreateResponse{
-		GameID:      gameID,
-		GameMode:    mode,
-		InviteToken: gameID,
-		InviteURL:   inviteURL,
-		JoinURL:     inviteURL,
-		ExpiresAt:   expiresAt,
-		Status:      string(StatusWaiting),
+		GameID:        gameID,
+		GameMode:      mode,
+		TimeControlID: timeControlID,
+		InviteToken:   gameID,
+		InviteURL:     inviteURL,
+		JoinURL:       inviteURL,
+		ExpiresAt:     expiresAt,
+		Status:        string(StatusWaiting),
 	})
 }
 
@@ -524,15 +541,18 @@ func (h *HTTP) PostMatchSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.Svc.SearchMatch(r.Context(), MatchSearchInput{
-		UserID:   participant.ID,
-		GameMode: req.GameMode,
-		MinStake: req.MinStake,
-		MaxStake: req.MaxStake,
+		UserID:        participant.ID,
+		GameMode:      req.GameMode,
+		TimeControlID: req.TimeControlID,
+		MinStake:      req.MinStake,
+		MaxStake:      req.MaxStake,
 	}, engine)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidStakeRange):
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid game_mode or stake range"})
+		case errors.Is(err, ErrInvalidTimeControl):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid time_control_id"})
 		case errors.Is(err, user.ErrInsufficientGameCurrency):
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "insufficient game currency"})
 		default:
@@ -563,15 +583,18 @@ func (h *HTTP) PostMatchSearchPreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.Svc.PreviewMatchSearch(MatchSearchPreviewInput{
-		UserID:   participant.ID,
-		GameMode: req.GameMode,
-		MinStake: req.MinStake,
-		MaxStake: req.MaxStake,
+		UserID:        participant.ID,
+		GameMode:      req.GameMode,
+		TimeControlID: req.TimeControlID,
+		MinStake:      req.MinStake,
+		MaxStake:      req.MaxStake,
 	})
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidStakeRange):
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid game_mode or stake range"})
+		case errors.Is(err, ErrInvalidTimeControl):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid time_control_id"})
 		default:
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to preview match search"})
 		}
@@ -595,6 +618,48 @@ func (h *HTTP) PostMatchSearchLeave(w http.ResponseWriter, r *http.Request) {
 
 	result := h.Svc.LeaveMatchSearch(participant.ID)
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *HTTP) PostTimeout(w http.ResponseWriter, r *http.Request, gameID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	participant, err := h.AuthService.UserFromBearer(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+
+	state, err := h.Svc.Timeout(r.Context(), gameID, participant.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrGameNotFound):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "game not found"})
+		case errors.Is(err, ErrForbidden):
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "not a participant"})
+		case errors.Is(err, ErrGameFinished):
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "game already finished"})
+		case errors.Is(err, ErrGameNotActive):
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "game is not active"})
+		case errors.Is(err, ErrUntimedGame):
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "game has no time control"})
+		case errors.Is(err, ErrClockStillRunning):
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "clock still running"})
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
+	if h.BroadcastState != nil {
+		h.BroadcastState(gameID, state)
+	}
+	if h.BroadcastFinished != nil {
+		h.BroadcastFinished(gameID, state)
+	}
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (h *HTTP) resolveInviteParticipant(r *http.Request) (string, *user.User, error) {

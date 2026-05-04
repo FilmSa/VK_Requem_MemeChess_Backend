@@ -14,47 +14,58 @@ import (
 )
 
 var (
-	ErrGameNotFound      = errors.New("game not found")
-	ErrForbidden         = errors.New("forbidden")
-	ErrGameFull          = errors.New("game room is full")
-	ErrNotYourTurn       = errors.New("not your turn")
-	ErrGameFinished      = errors.New("game already finished")
-	ErrGameNotActive     = errors.New("game is not active")
-	ErrInvalidMove       = errors.New("invalid move")
-	ErrInvalidGameMode   = errors.New("invalid game mode")
-	ErrInvalidDifficulty = errors.New("invalid bot difficulty")
-	ErrInviteExpired     = errors.New("invite token expired")
-	ErrInviteUsed        = errors.New("invite token already used")
-	ErrInviteOwnGame     = errors.New("host cannot join own invite")
-	ErrInvalidStakeRange = errors.New("invalid stake range")
+	ErrGameNotFound       = errors.New("game not found")
+	ErrForbidden          = errors.New("forbidden")
+	ErrGameFull           = errors.New("game room is full")
+	ErrNotYourTurn        = errors.New("not your turn")
+	ErrGameFinished       = errors.New("game already finished")
+	ErrGameNotActive      = errors.New("game is not active")
+	ErrInvalidMove        = errors.New("invalid move")
+	ErrInvalidGameMode    = errors.New("invalid game mode")
+	ErrInvalidDifficulty  = errors.New("invalid bot difficulty")
+	ErrInviteExpired      = errors.New("invite token expired")
+	ErrInviteUsed         = errors.New("invite token already used")
+	ErrInviteOwnGame      = errors.New("host cannot join own invite")
+	ErrInvalidStakeRange  = errors.New("invalid stake range")
+	ErrInvalidTimeControl = errors.New("invalid time control")
+	ErrClockStillRunning  = errors.New("clock still running")
+	ErrUntimedGame        = errors.New("untimed game")
+	ErrTimeExpired        = errors.New("player time expired")
 )
 
 const defaultInviteTTL = 15 * time.Minute
 
 type State struct {
-	GameID              string    `json:"game_id"`
-	GameMode            string    `json:"game_mode"`
-	BotGame             bool      `json:"bot_game,omitempty"`
-	BotDifficulty       string    `json:"bot_difficulty,omitempty"`
-	InitialFEN          string    `json:"initial_fen,omitempty"`
-	LegalMoves          []string  `json:"legal_moves,omitempty"`
-	Player1ID           string    `json:"player1_id"`
-	Player2ID           string    `json:"player2_id"`
-	Player1Connected    bool      `json:"player1_connected"`
-	Player2Connected    bool      `json:"player2_connected"`
-	Status              string    `json:"status"`
-	CurrentTurnUserID   string    `json:"current_turn_user_id"`
-	BetAmount           int64     `json:"bet_amount,omitempty"`
-	DrawOfferedBy       string    `json:"draw_offered_by,omitempty"`
-	DrawOfferedAt       time.Time `json:"draw_offered_at,omitempty"`
-	FEN                 string    `json:"fen"`
-	LastMove            string    `json:"last_move"`
-	WinnerID            string    `json:"winner_id,omitempty"`
-	FinishedReason      string    `json:"finished_reason,omitempty"`
-	RootPositionHash    string    `json:"root_position_hash"`
-	CurrentPositionHash string    `json:"current_position_hash"`
-	VariantPly          int       `json:"variant_ply"`
-	Moves               []Move    `json:"moves"`
+	GameID                 string    `json:"game_id"`
+	GameMode               string    `json:"game_mode"`
+	BotGame                bool      `json:"bot_game,omitempty"`
+	BotDifficulty          string    `json:"bot_difficulty,omitempty"`
+	InitialFEN             string    `json:"initial_fen,omitempty"`
+	LegalMoves             []string  `json:"legal_moves,omitempty"`
+	Player1ID              string    `json:"player1_id"`
+	Player2ID              string    `json:"player2_id"`
+	Player1Connected       bool      `json:"player1_connected"`
+	Player2Connected       bool      `json:"player2_connected"`
+	Status                 string    `json:"status"`
+	CurrentTurnUserID      string    `json:"current_turn_user_id"`
+	BetAmount              int64     `json:"bet_amount,omitempty"`
+	TimeControlID          string    `json:"time_control_id,omitempty"`
+	TimeControlLabel       string    `json:"time_control_label,omitempty"`
+	TimeControlBaseMs      int64     `json:"time_control_base_ms,omitempty"`
+	TimeControlIncrementMs int64     `json:"time_control_increment_ms,omitempty"`
+	Player1RemainingMs     int64     `json:"player1_remaining_ms,omitempty"`
+	Player2RemainingMs     int64     `json:"player2_remaining_ms,omitempty"`
+	CurrentTurnStartedAt   time.Time `json:"current_turn_started_at,omitempty"`
+	DrawOfferedBy          string    `json:"draw_offered_by,omitempty"`
+	DrawOfferedAt          time.Time `json:"draw_offered_at,omitempty"`
+	FEN                    string    `json:"fen"`
+	LastMove               string    `json:"last_move"`
+	WinnerID               string    `json:"winner_id,omitempty"`
+	FinishedReason         string    `json:"finished_reason,omitempty"`
+	RootPositionHash       string    `json:"root_position_hash"`
+	CurrentPositionHash    string    `json:"current_position_hash"`
+	VariantPly             int       `json:"variant_ply"`
+	Moves                  []Move    `json:"moves"`
 }
 
 type Service struct {
@@ -85,30 +96,34 @@ func (s *Service) SetUserRepository(userRepo *user.Repository) {
 }
 
 type MatchSearchInput struct {
-	UserID   string
-	GameMode string
-	MinStake int64
-	MaxStake int64
+	UserID        string
+	GameMode      string
+	TimeControlID string
+	MinStake      int64
+	MaxStake      int64
 }
 
 type MatchSearchResult struct {
-	Status       string `json:"status"`
-	GameID       string `json:"game_id,omitempty"`
-	AgreedStake  int64  `json:"agreed_stake,omitempty"`
-	GameCurrency string `json:"game_currency,omitempty"`
-	GameMode     string `json:"game_mode,omitempty"`
+	Status        string `json:"status"`
+	GameID        string `json:"game_id,omitempty"`
+	AgreedStake   int64  `json:"agreed_stake,omitempty"`
+	GameCurrency  string `json:"game_currency,omitempty"`
+	GameMode      string `json:"game_mode,omitempty"`
+	TimeControlID string `json:"time_control_id,omitempty"`
 }
 
 type MatchSearchPreviewInput struct {
-	UserID   string
-	GameMode string
-	MinStake int64
-	MaxStake int64
+	UserID        string
+	GameMode      string
+	TimeControlID string
+	MinStake      int64
+	MaxStake      int64
 }
 
 type MatchSearchPreviewResult struct {
 	MatchedUsersCount int64  `json:"matched_users_count"`
 	GameMode          string `json:"game_mode"`
+	TimeControlID     string `json:"time_control_id,omitempty"`
 }
 
 type MatchSearchLeaveResult struct {
@@ -116,10 +131,11 @@ type MatchSearchLeaveResult struct {
 }
 
 type matchRequest struct {
-	UserID   string
-	GameMode string
-	MinStake int64
-	MaxStake int64
+	UserID        string
+	GameMode      string
+	TimeControlID string
+	MinStake      int64
+	MaxStake      int64
 }
 
 func (s *Service) SetMoveAnalyzer(moveAnalyzer MoveAnalyzer) {
@@ -129,10 +145,22 @@ func (s *Service) SetMoveAnalyzer(moveAnalyzer MoveAnalyzer) {
 }
 
 func (s *Service) CreateGame(ctx context.Context, gameID, player1ID, player2ID string, engine Engine) (*Session, error) {
-	return s.CreateGameWithMode(ctx, gameID, GameModeClassic, player1ID, player2ID, engine)
+	return s.CreateGameWithTimeControl(ctx, gameID, GameModeClassic, player1ID, player2ID, engine, TimeControlUnlimited)
 }
 
 func (s *Service) CreateGameWithMode(ctx context.Context, gameID, gameMode, player1ID, player2ID string, engine Engine) (*Session, error) {
+	return s.CreateGameWithTimeControl(ctx, gameID, gameMode, player1ID, player2ID, engine, TimeControlUnlimited)
+}
+
+func (s *Service) CreateGameWithTimeControl(
+	ctx context.Context,
+	gameID,
+	gameMode,
+	player1ID,
+	player2ID string,
+	engine Engine,
+	timeControlID string,
+) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -140,23 +168,33 @@ func (s *Service) CreateGameWithMode(ctx context.Context, gameID, gameMode, play
 	if mode == "" {
 		return nil, ErrInvalidStakeRange
 	}
+	normalizedTimeControlID := normalizeTimeControlID(timeControlID)
+	if normalizedTimeControlID == "" {
+		return nil, ErrInvalidTimeControl
+	}
 
-	session := NewSession(gameID, mode, player1ID, player2ID, 0, engine)
+	session := NewSessionWithTimeControl(gameID, mode, player1ID, player2ID, 0, engine, normalizedTimeControlID)
 	s.trackSessionVariantLocked(session)
 	s.sessions[gameID] = session
 
 	if s.repository != nil {
 		p2 := player2ID
 		err := s.repository.CreateGame(ctx, CreateGameParams{
-			GameID:            gameID,
-			Player1ID:         player1ID,
-			Player2ID:         &p2,
-			Status:            string(session.Status),
-			BetAmount:         0,
-			MemeMode:          false,
-			GameMode:          mode,
-			FEN:               session.FEN,
-			CurrentTurnUserID: session.CurrentTurnUserID,
+			GameID:                 gameID,
+			Player1ID:              player1ID,
+			Player2ID:              &p2,
+			Status:                 string(session.Status),
+			BetAmount:              0,
+			MemeMode:               false,
+			GameMode:               mode,
+			TimeControlID:          nullableString(normalizedTimeControlID, TimeControlUnlimited),
+			TimeControlBaseMs:      nullableInt64(session.TimeControlBaseMs),
+			TimeControlIncrementMs: nullableInt64(session.TimeControlIncrement),
+			Player1RemainingMs:     nullableInt64(session.Player1RemainingMs),
+			Player2RemainingMs:     nullableInt64(session.Player2RemainingMs),
+			CurrentTurnStartedAt:   nil,
+			FEN:                    session.FEN,
+			CurrentTurnUserID:      session.CurrentTurnUserID,
 		})
 		if err != nil {
 			s.variantTracker.ForgetGame(gameID)
@@ -173,10 +211,19 @@ func (s *Service) CreateGameWithMode(ctx context.Context, gameID, gameMode, play
 }
 
 func (s *Service) CreateInviteGame(ctx context.Context, hostUserID string, engine Engine) (gameID string, err error) {
-	return s.CreateInviteGameWithMode(ctx, GameModeClassic, hostUserID, engine)
+	return s.CreateInviteGameWithTimeControl(ctx, GameModeClassic, hostUserID, engine, TimeControlUnlimited)
 }
 
 func (s *Service) CreateInviteGameWithMode(ctx context.Context, gameMode, hostUserID string, engine Engine) (gameID string, err error) {
+	return s.CreateInviteGameWithTimeControl(ctx, gameMode, hostUserID, engine, TimeControlUnlimited)
+}
+
+func (s *Service) CreateInviteGameWithTimeControl(
+	ctx context.Context,
+	gameMode, hostUserID string,
+	engine Engine,
+	timeControlID string,
+) (gameID string, err error) {
 	id, err := newGameID()
 	if err != nil {
 		return "", err
@@ -193,23 +240,33 @@ func (s *Service) CreateInviteGameWithMode(ctx context.Context, gameMode, hostUs
 	if mode == "" {
 		return "", ErrInvalidStakeRange
 	}
+	normalizedTimeControlID := normalizeTimeControlID(timeControlID)
+	if normalizedTimeControlID == "" {
+		return "", ErrInvalidTimeControl
+	}
 
-	session := NewSession(id, mode, hostUserID, "", 0, engine)
+	session := NewSessionWithTimeControl(id, mode, hostUserID, "", 0, engine, normalizedTimeControlID)
 	session.InviteExpiresAt = time.Now().Add(defaultInviteTTL)
 	s.trackSessionVariantLocked(session)
 	s.sessions[id] = session
 
 	if s.repository != nil {
 		err := s.repository.CreateGame(ctx, CreateGameParams{
-			GameID:            id,
-			Player1ID:         hostUserID,
-			Player2ID:         nil,
-			Status:            string(session.Status),
-			BetAmount:         0,
-			MemeMode:          false,
-			GameMode:          mode,
-			FEN:               session.FEN,
-			CurrentTurnUserID: session.CurrentTurnUserID,
+			GameID:                 id,
+			Player1ID:              hostUserID,
+			Player2ID:              nil,
+			Status:                 string(session.Status),
+			BetAmount:              0,
+			MemeMode:               false,
+			GameMode:               mode,
+			TimeControlID:          nullableString(normalizedTimeControlID, TimeControlUnlimited),
+			TimeControlBaseMs:      nullableInt64(session.TimeControlBaseMs),
+			TimeControlIncrementMs: nullableInt64(session.TimeControlIncrement),
+			Player1RemainingMs:     nullableInt64(session.Player1RemainingMs),
+			Player2RemainingMs:     nullableInt64(session.Player2RemainingMs),
+			CurrentTurnStartedAt:   nil,
+			FEN:                    session.FEN,
+			CurrentTurnUserID:      session.CurrentTurnUserID,
 		})
 		if err != nil {
 			s.variantTracker.ForgetGame(id)
@@ -270,8 +327,12 @@ func (s *Service) CreateBotGame(ctx context.Context, playerID, gameMode, difficu
 
 func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine Engine) (MatchSearchResult, error) {
 	mode := normalizeGameMode(in.GameMode)
+	timeControlID := normalizeTimeControlID(in.TimeControlID)
 	if in.UserID == "" || in.MinStake <= 0 || in.MaxStake < in.MinStake || mode == "" {
 		return MatchSearchResult{}, ErrInvalidStakeRange
+	}
+	if timeControlID == "" || timeControlID == TimeControlUnlimited {
+		return MatchSearchResult{}, ErrInvalidTimeControl
 	}
 
 	s.mu.Lock()
@@ -284,13 +345,14 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 		waiting := s.matchQueue[i]
 		if waiting.UserID == in.UserID {
 			s.matchQueue[i] = matchRequest{
-				UserID:   in.UserID,
-				GameMode: mode,
-				MinStake: in.MinStake,
-				MaxStake: in.MaxStake,
+				UserID:        in.UserID,
+				GameMode:      mode,
+				TimeControlID: timeControlID,
+				MinStake:      in.MinStake,
+				MaxStake:      in.MaxStake,
 			}
 			s.mu.Unlock()
-			return MatchSearchResult{Status: "queued", GameMode: mode}, nil
+			return MatchSearchResult{Status: "queued", GameMode: mode, TimeControlID: timeControlID}, nil
 		}
 	}
 
@@ -303,6 +365,9 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 		if waiting.GameMode != mode {
 			continue
 		}
+		if waiting.TimeControlID != timeControlID {
+			continue
+		}
 		if !rangesOverlap(waiting.MinStake, waiting.MaxStake, in.MinStake, in.MaxStake) {
 			continue
 		}
@@ -312,13 +377,14 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 
 	if matchIndex < 0 {
 		s.matchQueue = append(s.matchQueue, matchRequest{
-			UserID:   in.UserID,
-			GameMode: mode,
-			MinStake: in.MinStake,
-			MaxStake: in.MaxStake,
+			UserID:        in.UserID,
+			GameMode:      mode,
+			TimeControlID: timeControlID,
+			MinStake:      in.MinStake,
+			MaxStake:      in.MaxStake,
 		})
 		s.mu.Unlock()
-		return MatchSearchResult{Status: "queued", GameMode: mode}, nil
+		return MatchSearchResult{Status: "queued", GameMode: mode, TimeControlID: timeControlID}, nil
 	}
 
 	waiting := s.matchQueue[matchIndex]
@@ -336,7 +402,7 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 		}
 	}
 
-	gameID, err := s.createMatchedGame(ctx, in.UserID, waiting.UserID, agreedStake, mode, engine)
+	gameID, err := s.createMatchedGame(ctx, in.UserID, waiting.UserID, agreedStake, mode, engine, timeControlID)
 	if err != nil {
 		if s.userRepo != nil {
 			_ = s.userRepo.AddGameCurrency(ctx, in.UserID, agreedStake)
@@ -346,11 +412,12 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 	}
 
 	result := MatchSearchResult{
-		Status:       "matched",
-		GameID:       gameID,
-		AgreedStake:  agreedStake,
-		GameCurrency: "game_currency",
-		GameMode:     mode,
+		Status:        "matched",
+		GameID:        gameID,
+		AgreedStake:   agreedStake,
+		GameCurrency:  "game_currency",
+		GameMode:      mode,
+		TimeControlID: timeControlID,
 	}
 
 	s.mu.Lock()
@@ -362,8 +429,12 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 
 func (s *Service) PreviewMatchSearch(in MatchSearchPreviewInput) (MatchSearchPreviewResult, error) {
 	mode := normalizeGameMode(in.GameMode)
+	timeControlID := normalizeTimeControlID(in.TimeControlID)
 	if in.MinStake <= 0 || in.MaxStake < in.MinStake || mode == "" {
 		return MatchSearchPreviewResult{}, ErrInvalidStakeRange
+	}
+	if timeControlID == "" || timeControlID == TimeControlUnlimited {
+		return MatchSearchPreviewResult{}, ErrInvalidTimeControl
 	}
 
 	userID := strings.TrimSpace(in.UserID)
@@ -380,6 +451,9 @@ func (s *Service) PreviewMatchSearch(in MatchSearchPreviewInput) (MatchSearchPre
 		if waiting.GameMode != mode {
 			continue
 		}
+		if waiting.TimeControlID != timeControlID {
+			continue
+		}
 		if !rangesOverlap(waiting.MinStake, waiting.MaxStake, in.MinStake, in.MaxStake) {
 			continue
 		}
@@ -389,6 +463,7 @@ func (s *Service) PreviewMatchSearch(in MatchSearchPreviewInput) (MatchSearchPre
 	return MatchSearchPreviewResult{
 		MatchedUsersCount: count,
 		GameMode:          mode,
+		TimeControlID:     timeControlID,
 	}, nil
 }
 
@@ -412,7 +487,7 @@ func (s *Service) LeaveMatchSearch(userID string) MatchSearchLeaveResult {
 	return MatchSearchLeaveResult{Status: "idle"}
 }
 
-func (s *Service) createMatchedGame(ctx context.Context, player1ID, player2ID string, stake int64, mode string, engine Engine) (string, error) {
+func (s *Service) createMatchedGame(ctx context.Context, player1ID, player2ID string, stake int64, mode string, engine Engine, timeControlID string) (string, error) {
 	id, err := newGameID()
 	if err != nil {
 		return "", err
@@ -425,22 +500,28 @@ func (s *Service) createMatchedGame(ctx context.Context, player1ID, player2ID st
 		return "", errors.New("game id collision")
 	}
 
-	session := NewSession(id, mode, player1ID, player2ID, stake, engine)
+	session := NewSessionWithTimeControl(id, mode, player1ID, player2ID, stake, engine, timeControlID)
 	s.trackSessionVariantLocked(session)
 	s.sessions[id] = session
 
 	if s.repository != nil {
 		p2 := player2ID
 		err := s.repository.CreateGame(ctx, CreateGameParams{
-			GameID:            id,
-			Player1ID:         player1ID,
-			Player2ID:         &p2,
-			Status:            string(session.Status),
-			BetAmount:         stake,
-			MemeMode:          mode == "meme",
-			GameMode:          mode,
-			FEN:               session.FEN,
-			CurrentTurnUserID: session.CurrentTurnUserID,
+			GameID:                 id,
+			Player1ID:              player1ID,
+			Player2ID:              &p2,
+			Status:                 string(session.Status),
+			BetAmount:              stake,
+			MemeMode:               mode == "meme",
+			GameMode:               mode,
+			TimeControlID:          nullableString(timeControlID, TimeControlUnlimited),
+			TimeControlBaseMs:      nullableInt64(session.TimeControlBaseMs),
+			TimeControlIncrementMs: nullableInt64(session.TimeControlIncrement),
+			Player1RemainingMs:     nullableInt64(session.Player1RemainingMs),
+			Player2RemainingMs:     nullableInt64(session.Player2RemainingMs),
+			CurrentTurnStartedAt:   nil,
+			FEN:                    session.FEN,
+			CurrentTurnUserID:      session.CurrentTurnUserID,
 		})
 		if err != nil {
 			s.variantTracker.ForgetGame(id)
@@ -497,7 +578,11 @@ func (s *Service) JoinGame(ctx context.Context, gameID, userID string) (State, e
 		delete(s.pendingMatches, userID)
 		s.mu.Unlock()
 		session.SetConnected(userID, true)
-		return session.Snapshot(), nil
+		state := session.Snapshot()
+		if err := s.persistNonTerminalState(ctx, state); err != nil {
+			return State{}, err
+		}
+		return state, nil
 	}
 
 	if session.IsInviteExpired(time.Now()) {
@@ -522,7 +607,11 @@ func (s *Service) JoinGame(ctx context.Context, gameID, userID string) (State, e
 	delete(s.pendingMatches, userID)
 	s.mu.Unlock()
 	session.SetConnected(userID, true)
-	return session.Snapshot(), nil
+	state := session.Snapshot()
+	if err := s.persistNonTerminalState(ctx, state); err != nil {
+		return State{}, err
+	}
+	return state, nil
 }
 
 func (s *Service) ReserveInviteSeat(ctx context.Context, inviteToken, userID string) (State, error) {
@@ -583,6 +672,14 @@ func (s *Service) MakeMove(ctx context.Context, gameID, userID, move string) (St
 
 	state, result, err := session.ApplyMove(userID, move)
 	if err != nil {
+		if errors.Is(err, ErrTimeExpired) {
+			if persistErr := s.persistFinishedState(ctx, state); persistErr != nil {
+				return State{}, MoveResult{}, persistErr
+			}
+			if payoutErr := s.settlePayoutIfNeeded(ctx, session, state); payoutErr != nil {
+				return State{}, MoveResult{}, payoutErr
+			}
+		}
 		return State{}, MoveResult{}, err
 	}
 
@@ -779,6 +876,28 @@ func (s *Service) AcceptDraw(ctx context.Context, gameID, userID string) (State,
 	return state, nil
 }
 
+func (s *Service) Timeout(ctx context.Context, gameID, requesterID string) (State, error) {
+	session, ok := s.GetSession(gameID)
+	if !ok {
+		return State{}, ErrGameNotFound
+	}
+	if !session.HasPlayer(requesterID) {
+		return State{}, ErrForbidden
+	}
+
+	state, err := session.Timeout(time.Now())
+	if err != nil {
+		return State{}, err
+	}
+	if err := s.persistFinishedState(ctx, state); err != nil {
+		return State{}, err
+	}
+	if err := s.settlePayoutIfNeeded(ctx, session, state); err != nil {
+		return State{}, err
+	}
+	return state, nil
+}
+
 func (s *Service) persistFinishedState(ctx context.Context, state State) error {
 	if isBotUserID(state.Player2ID) {
 		return nil
@@ -803,13 +922,19 @@ func (s *Service) persistFinishedState(ctx context.Context, state State) error {
 	}
 
 	return s.repository.UpdateGameState(ctx, UpdateGameStateParams{
-		GameID:            state.GameID,
-		Status:            state.Status,
-		FEN:               state.FEN,
-		CurrentTurnUserID: state.CurrentTurnUserID,
-		WinnerID:          winnerID,
-		FinishedAt:        finishedAt,
-		FinishedReason:    finishedReason,
+		GameID:                 state.GameID,
+		Status:                 state.Status,
+		FEN:                    state.FEN,
+		CurrentTurnUserID:      state.CurrentTurnUserID,
+		TimeControlID:          nullableString(state.TimeControlID, TimeControlUnlimited),
+		TimeControlBaseMs:      nullableInt64(state.TimeControlBaseMs),
+		TimeControlIncrementMs: nullableInt64(state.TimeControlIncrementMs),
+		Player1RemainingMs:     nullableInt64(state.Player1RemainingMs),
+		Player2RemainingMs:     nullableInt64(state.Player2RemainingMs),
+		CurrentTurnStartedAt:   nil,
+		WinnerID:               winnerID,
+		FinishedAt:             finishedAt,
+		FinishedReason:         finishedReason,
 	})
 }
 
@@ -822,13 +947,19 @@ func (s *Service) persistNonTerminalState(ctx context.Context, state State) erro
 	}
 
 	return s.repository.UpdateGameState(ctx, UpdateGameStateParams{
-		GameID:            state.GameID,
-		Status:            state.Status,
-		FEN:               state.FEN,
-		CurrentTurnUserID: state.CurrentTurnUserID,
-		WinnerID:          nil,
-		FinishedAt:        nil,
-		FinishedReason:    nil,
+		GameID:                 state.GameID,
+		Status:                 state.Status,
+		FEN:                    state.FEN,
+		CurrentTurnUserID:      state.CurrentTurnUserID,
+		TimeControlID:          nullableString(state.TimeControlID, TimeControlUnlimited),
+		TimeControlBaseMs:      nullableInt64(state.TimeControlBaseMs),
+		TimeControlIncrementMs: nullableInt64(state.TimeControlIncrementMs),
+		Player1RemainingMs:     nullableInt64(state.Player1RemainingMs),
+		Player2RemainingMs:     nullableInt64(state.Player2RemainingMs),
+		CurrentTurnStartedAt:   nullableTime(state.CurrentTurnStartedAt),
+		WinnerID:               nil,
+		FinishedAt:             nil,
+		FinishedReason:         nil,
 	})
 }
 
@@ -867,4 +998,26 @@ func (s *Service) settlePayoutIfNeeded(ctx context.Context, session *Session, st
 	}
 
 	return nil
+}
+
+func nullableString(value string, emptySentinel string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == emptySentinel {
+		return nil
+	}
+	return &trimmed
+}
+
+func nullableInt64(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+func nullableTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }

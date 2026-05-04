@@ -21,15 +21,21 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 type CreateGameParams struct {
-	GameID            string
-	Player1ID         string
-	Player2ID         *string // nil = waiting for opponent (invite link)
-	Status            string
-	BetAmount         int64
-	MemeMode          bool
-	GameMode          string
-	FEN               string
-	CurrentTurnUserID string
+	GameID                 string
+	Player1ID              string
+	Player2ID              *string // nil = waiting for opponent (invite link)
+	Status                 string
+	BetAmount              int64
+	MemeMode               bool
+	GameMode               string
+	TimeControlID          *string
+	TimeControlBaseMs      *int64
+	TimeControlIncrementMs *int64
+	Player1RemainingMs     *int64
+	Player2RemainingMs     *int64
+	CurrentTurnStartedAt   *time.Time
+	FEN                    string
+	CurrentTurnUserID      string
 }
 
 func (r *Repository) CreateGame(ctx context.Context, p CreateGameParams) error {
@@ -38,8 +44,11 @@ func (r *Repository) CreateGame(ctx context.Context, p CreateGameParams) error {
 
 	queryWithMode := `
 		INSERT INTO games (
-			id, player1_id, player2_id, status, bet_amount, meme_mode, game_mode, fen, current_turn_user_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			id, player1_id, player2_id, status, bet_amount, meme_mode, game_mode,
+			time_control_id, time_control_base_ms, time_control_increment_ms,
+			player1_remaining_ms, player2_remaining_ms, current_turn_started_at,
+			fen, current_turn_user_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`
 
 	var player2 any
@@ -55,11 +64,17 @@ func (r *Repository) CreateGame(ctx context.Context, p CreateGameParams) error {
 		p.BetAmount,
 		p.MemeMode,
 		p.GameMode,
+		p.TimeControlID,
+		p.TimeControlBaseMs,
+		p.TimeControlIncrementMs,
+		p.Player1RemainingMs,
+		p.Player2RemainingMs,
+		p.CurrentTurnStartedAt,
 		p.FEN,
 		p.CurrentTurnUserID,
 	)
 	if err != nil {
-		if !isMissingGameModeColumn(err) {
+		if !isMissingGameMetadataColumns(err) {
 			return fmt.Errorf("insert game: %w", err)
 		}
 
@@ -97,6 +112,33 @@ func isMissingGameModeColumn(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "game_mode") &&
 		(strings.Contains(msg, "does not exist") || strings.Contains(msg, "unknown column"))
+}
+
+func isMissingGameMetadataColumns(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if isMissingGameModeColumn(err) {
+		return true
+	}
+
+	msg := strings.ToLower(err.Error())
+	for _, column := range []string{
+		"time_control_id",
+		"time_control_base_ms",
+		"time_control_increment_ms",
+		"player1_remaining_ms",
+		"player2_remaining_ms",
+		"current_turn_started_at",
+	} {
+		if strings.Contains(msg, column) &&
+			(strings.Contains(msg, "does not exist") || strings.Contains(msg, "unknown column")) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (r *Repository) SetPlayer2(ctx context.Context, gameID, player2ID string) error {
@@ -158,13 +200,19 @@ func (r *Repository) SaveMove(ctx context.Context, p SaveMoveParams) error {
 }
 
 type UpdateGameStateParams struct {
-	GameID            string
-	Status            string
-	FEN               string
-	CurrentTurnUserID string
-	WinnerID          *string
-	FinishedAt        *time.Time
-	FinishedReason    *string
+	GameID                 string
+	Status                 string
+	FEN                    string
+	CurrentTurnUserID      string
+	TimeControlID          *string
+	TimeControlBaseMs      *int64
+	TimeControlIncrementMs *int64
+	Player1RemainingMs     *int64
+	Player2RemainingMs     *int64
+	CurrentTurnStartedAt   *time.Time
+	WinnerID               *string
+	FinishedAt             *time.Time
+	FinishedReason         *string
 }
 
 func (r *Repository) UpdateGameState(ctx context.Context, p UpdateGameStateParams) error {
@@ -177,9 +225,15 @@ func (r *Repository) UpdateGameState(ctx context.Context, p UpdateGameStateParam
 			status = $2,
 			fen = $3,
 			current_turn_user_id = $4,
-			winner_id = $5,
-			finished_at = $6,
-			finished_reason = $7
+			time_control_id = $5,
+			time_control_base_ms = $6,
+			time_control_increment_ms = $7,
+			player1_remaining_ms = $8,
+			player2_remaining_ms = $9,
+			current_turn_started_at = $10,
+			winner_id = $11,
+			finished_at = $12,
+			finished_reason = $13
 		WHERE id = $1
 	`
 
@@ -188,12 +242,47 @@ func (r *Repository) UpdateGameState(ctx context.Context, p UpdateGameStateParam
 		p.Status,
 		p.FEN,
 		p.CurrentTurnUserID,
+		p.TimeControlID,
+		p.TimeControlBaseMs,
+		p.TimeControlIncrementMs,
+		p.Player1RemainingMs,
+		p.Player2RemainingMs,
+		p.CurrentTurnStartedAt,
 		p.WinnerID,
 		p.FinishedAt,
 		p.FinishedReason,
 	)
 	if err != nil {
-		return fmt.Errorf("update game state: %w", err)
+		if !isMissingGameMetadataColumns(err) {
+			return fmt.Errorf("update game state: %w", err)
+		}
+
+		legacyQuery := `
+			UPDATE games
+			SET
+				status = $2,
+				fen = $3,
+				current_turn_user_id = $4,
+				winner_id = $5,
+				finished_at = $6,
+				finished_reason = $7
+			WHERE id = $1
+		`
+
+		_, legacyErr := r.pool.Exec(ctx, legacyQuery,
+			p.GameID,
+			p.Status,
+			p.FEN,
+			p.CurrentTurnUserID,
+			p.WinnerID,
+			p.FinishedAt,
+			p.FinishedReason,
+		)
+		if legacyErr != nil {
+			return fmt.Errorf("update game state: %w", legacyErr)
+		}
+
+		return nil
 	}
 
 	return nil

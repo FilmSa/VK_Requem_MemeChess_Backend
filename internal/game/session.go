@@ -41,6 +41,14 @@ type Session struct {
 
 	BetAmount int64 `json:"bet_amount,omitempty"`
 
+	TimeControlID        string    `json:"time_control_id,omitempty"`
+	TimeControlLabel     string    `json:"time_control_label,omitempty"`
+	TimeControlBaseMs    int64     `json:"time_control_base_ms,omitempty"`
+	TimeControlIncrement int64     `json:"time_control_increment_ms,omitempty"`
+	Player1RemainingMs   int64     `json:"player1_remaining_ms,omitempty"`
+	Player2RemainingMs   int64     `json:"player2_remaining_ms,omitempty"`
+	CurrentTurnStartedAt time.Time `json:"current_turn_started_at,omitempty"`
+
 	InitialFEN          string `json:"initial_fen"`
 	FEN                 string `json:"fen"`
 	LastMove            string `json:"last_move"`
@@ -62,23 +70,46 @@ type Session struct {
 }
 
 func NewSession(gameID, gameMode, player1ID, player2ID string, betAmount int64, engine Engine) *Session {
+	return NewSessionWithTimeControl(gameID, gameMode, player1ID, player2ID, betAmount, engine, TimeControlUnlimited)
+}
+
+func NewSessionWithTimeControl(
+	gameID,
+	gameMode,
+	player1ID,
+	player2ID string,
+	betAmount int64,
+	engine Engine,
+	timeControlID string,
+) *Session {
+	timeControl, ok := resolveTimeControl(timeControlID)
+	if !ok {
+		timeControl = TimeControl{ID: TimeControlUnlimited}
+	}
+
 	return &Session{
-		GameID:            gameID,
-		GameMode:          normalizeGameMode(gameMode),
-		Player1ID:         player1ID,
-		Player2ID:         player2ID,
-		Status:            StatusWaiting,
-		CurrentTurnUserID: player1ID,
-		BetAmount:         betAmount,
-		InitialFEN:        engine.CurrentFEN(),
-		FEN:               engine.CurrentFEN(),
-		Moves:             make([]Move, 0, 128),
-		engine:            engine,
+		GameID:               gameID,
+		GameMode:             normalizeGameMode(gameMode),
+		Player1ID:            player1ID,
+		Player2ID:            player2ID,
+		Status:               StatusWaiting,
+		CurrentTurnUserID:    player1ID,
+		BetAmount:            betAmount,
+		TimeControlID:        timeControl.ID,
+		TimeControlLabel:     timeControl.Label,
+		TimeControlBaseMs:    durationToMilliseconds(timeControl.Base),
+		TimeControlIncrement: durationToMilliseconds(timeControl.Increment),
+		Player1RemainingMs:   durationToMilliseconds(timeControl.Base),
+		Player2RemainingMs:   durationToMilliseconds(timeControl.Base),
+		InitialFEN:           engine.CurrentFEN(),
+		FEN:                  engine.CurrentFEN(),
+		Moves:                make([]Move, 0, 128),
+		engine:               engine,
 	}
 }
 
 func NewBotSession(gameID, gameMode, player1ID, difficulty string, engine Engine) *Session {
-	session := NewSession(gameID, gameMode, player1ID, botUserID, 0, engine)
+	session := NewSessionWithTimeControl(gameID, gameMode, player1ID, botUserID, 0, engine, TimeControlUnlimited)
 	session.Player2Connected = true
 	session.Status = StatusActive
 	session.BotGame = true
@@ -187,29 +218,36 @@ func (s *Session) Snapshot() State {
 	copy(moves, s.Moves)
 
 	return State{
-		GameID:              s.GameID,
-		GameMode:            s.GameMode,
-		Player1ID:           s.Player1ID,
-		Player2ID:           s.Player2ID,
-		Player1Connected:    s.Player1Connected,
-		Player2Connected:    s.Player2Connected,
-		Status:              string(s.Status),
-		CurrentTurnUserID:   s.CurrentTurnUserID,
-		BetAmount:           s.BetAmount,
-		DrawOfferedBy:       s.DrawOfferedBy,
-		DrawOfferedAt:       s.DrawOfferedAt,
-		InitialFEN:          s.InitialFEN,
-		FEN:                 s.FEN,
-		LastMove:            s.LastMove,
-		WinnerID:            s.WinnerID,
-		FinishedReason:      s.FinishedReason,
-		RootPositionHash:    s.RootPositionHash,
-		CurrentPositionHash: s.CurrentPositionHash,
-		VariantPly:          s.VariantPly,
-		BotGame:             s.BotGame,
-		BotDifficulty:       s.BotDifficulty,
-		LegalMoves:          s.legalMovesLocked(),
-		Moves:               moves,
+		GameID:                 s.GameID,
+		GameMode:               s.GameMode,
+		Player1ID:              s.Player1ID,
+		Player2ID:              s.Player2ID,
+		Player1Connected:       s.Player1Connected,
+		Player2Connected:       s.Player2Connected,
+		Status:                 string(s.Status),
+		CurrentTurnUserID:      s.CurrentTurnUserID,
+		BetAmount:              s.BetAmount,
+		TimeControlID:          s.TimeControlID,
+		TimeControlLabel:       s.TimeControlLabel,
+		TimeControlBaseMs:      s.TimeControlBaseMs,
+		TimeControlIncrementMs: s.TimeControlIncrement,
+		Player1RemainingMs:     s.currentRemainingMsLocked(s.Player1ID, time.Now()),
+		Player2RemainingMs:     s.currentRemainingMsLocked(s.Player2ID, time.Now()),
+		CurrentTurnStartedAt:   s.CurrentTurnStartedAt,
+		DrawOfferedBy:          s.DrawOfferedBy,
+		DrawOfferedAt:          s.DrawOfferedAt,
+		InitialFEN:             s.InitialFEN,
+		FEN:                    s.FEN,
+		LastMove:               s.LastMove,
+		WinnerID:               s.WinnerID,
+		FinishedReason:         s.FinishedReason,
+		RootPositionHash:       s.RootPositionHash,
+		CurrentPositionHash:    s.CurrentPositionHash,
+		VariantPly:             s.VariantPly,
+		BotGame:                s.BotGame,
+		BotDifficulty:          s.BotDifficulty,
+		LegalMoves:             s.legalMovesLocked(),
+		Moves:                  moves,
 	}
 }
 
@@ -234,6 +272,19 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 	}
 	if userID != s.CurrentTurnUserID {
 		return State{}, MoveResult{}, ErrNotYourTurn
+	}
+	if s.hasTimedClockLocked() {
+		now := time.Now()
+		if !s.CurrentTurnStartedAt.IsZero() {
+			remaining := s.currentRemainingDurationLocked(userID, now)
+			if remaining <= 0 {
+				s.setRemainingDurationLocked(userID, 0)
+				timedOutState := s.finishTimeoutLocked(userID)
+				return timedOutState, MoveResult{}, ErrTimeExpired
+			}
+
+			s.setRemainingDurationLocked(userID, remaining+s.timeIncrementLocked())
+		}
 	}
 
 	result, err := s.engine.ApplyMove(move)
@@ -261,11 +312,15 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 		s.Status = StatusFinished
 		s.WinnerID = userID
 		s.FinishedReason = "checkmate"
+		s.CurrentTurnStartedAt = time.Time{}
 	} else {
 		if s.CurrentTurnUserID == s.Player1ID {
 			s.CurrentTurnUserID = s.Player2ID
 		} else {
 			s.CurrentTurnUserID = s.Player1ID
+		}
+		if s.hasTimedClockLocked() && len(s.Moves) >= 2 {
+			s.CurrentTurnStartedAt = time.Now()
 		}
 	}
 
@@ -273,29 +328,36 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 	copy(moves, s.Moves)
 
 	return State{
-		GameID:              s.GameID,
-		GameMode:            s.GameMode,
-		Player1ID:           s.Player1ID,
-		Player2ID:           s.Player2ID,
-		Player1Connected:    s.Player1Connected,
-		Player2Connected:    s.Player2Connected,
-		Status:              string(s.Status),
-		CurrentTurnUserID:   s.CurrentTurnUserID,
-		BetAmount:           s.BetAmount,
-		DrawOfferedBy:       s.DrawOfferedBy,
-		DrawOfferedAt:       s.DrawOfferedAt,
-		InitialFEN:          s.InitialFEN,
-		FEN:                 s.FEN,
-		LastMove:            s.LastMove,
-		WinnerID:            s.WinnerID,
-		FinishedReason:      s.FinishedReason,
-		RootPositionHash:    s.RootPositionHash,
-		CurrentPositionHash: s.CurrentPositionHash,
-		VariantPly:          s.VariantPly,
-		BotGame:             s.BotGame,
-		BotDifficulty:       s.BotDifficulty,
-		LegalMoves:          s.legalMovesLocked(),
-		Moves:               moves,
+		GameID:                 s.GameID,
+		GameMode:               s.GameMode,
+		Player1ID:              s.Player1ID,
+		Player2ID:              s.Player2ID,
+		Player1Connected:       s.Player1Connected,
+		Player2Connected:       s.Player2Connected,
+		Status:                 string(s.Status),
+		CurrentTurnUserID:      s.CurrentTurnUserID,
+		BetAmount:              s.BetAmount,
+		TimeControlID:          s.TimeControlID,
+		TimeControlLabel:       s.TimeControlLabel,
+		TimeControlBaseMs:      s.TimeControlBaseMs,
+		TimeControlIncrementMs: s.TimeControlIncrement,
+		Player1RemainingMs:     s.currentRemainingMsLocked(s.Player1ID, time.Now()),
+		Player2RemainingMs:     s.currentRemainingMsLocked(s.Player2ID, time.Now()),
+		CurrentTurnStartedAt:   s.CurrentTurnStartedAt,
+		DrawOfferedBy:          s.DrawOfferedBy,
+		DrawOfferedAt:          s.DrawOfferedAt,
+		InitialFEN:             s.InitialFEN,
+		FEN:                    s.FEN,
+		LastMove:               s.LastMove,
+		WinnerID:               s.WinnerID,
+		FinishedReason:         s.FinishedReason,
+		RootPositionHash:       s.RootPositionHash,
+		CurrentPositionHash:    s.CurrentPositionHash,
+		VariantPly:             s.VariantPly,
+		BotGame:                s.BotGame,
+		BotDifficulty:          s.BotDifficulty,
+		LegalMoves:             s.legalMovesLocked(),
+		Moves:                  moves,
 	}, result, nil
 }
 
@@ -321,6 +383,7 @@ func (s *Session) Resign(userID string) (State, error) {
 	s.Status = StatusFinished
 	s.WinnerID = winner
 	s.FinishedReason = "resign"
+	s.CurrentTurnStartedAt = time.Time{}
 	s.DrawOfferedBy = ""
 	s.DrawOfferedAt = time.Time{}
 
@@ -398,6 +461,7 @@ func (s *Session) AcceptDraw(userID string) (State, error) {
 	s.Status = StatusFinished
 	s.WinnerID = ""
 	s.FinishedReason = "draw_agreed"
+	s.CurrentTurnStartedAt = time.Time{}
 	s.DrawOfferedBy = ""
 	s.DrawOfferedAt = time.Time{}
 
@@ -409,29 +473,36 @@ func (s *Session) snapshotLocked() State {
 	copy(moves, s.Moves)
 
 	return State{
-		GameID:              s.GameID,
-		GameMode:            s.GameMode,
-		Player1ID:           s.Player1ID,
-		Player2ID:           s.Player2ID,
-		Player1Connected:    s.Player1Connected,
-		Player2Connected:    s.Player2Connected,
-		Status:              string(s.Status),
-		CurrentTurnUserID:   s.CurrentTurnUserID,
-		BetAmount:           s.BetAmount,
-		DrawOfferedBy:       s.DrawOfferedBy,
-		DrawOfferedAt:       s.DrawOfferedAt,
-		InitialFEN:          s.InitialFEN,
-		FEN:                 s.FEN,
-		LastMove:            s.LastMove,
-		WinnerID:            s.WinnerID,
-		FinishedReason:      s.FinishedReason,
-		RootPositionHash:    s.RootPositionHash,
-		CurrentPositionHash: s.CurrentPositionHash,
-		VariantPly:          s.VariantPly,
-		BotGame:             s.BotGame,
-		BotDifficulty:       s.BotDifficulty,
-		LegalMoves:          s.legalMovesLocked(),
-		Moves:               moves,
+		GameID:                 s.GameID,
+		GameMode:               s.GameMode,
+		Player1ID:              s.Player1ID,
+		Player2ID:              s.Player2ID,
+		Player1Connected:       s.Player1Connected,
+		Player2Connected:       s.Player2Connected,
+		Status:                 string(s.Status),
+		CurrentTurnUserID:      s.CurrentTurnUserID,
+		BetAmount:              s.BetAmount,
+		TimeControlID:          s.TimeControlID,
+		TimeControlLabel:       s.TimeControlLabel,
+		TimeControlBaseMs:      s.TimeControlBaseMs,
+		TimeControlIncrementMs: s.TimeControlIncrement,
+		Player1RemainingMs:     s.currentRemainingMsLocked(s.Player1ID, time.Now()),
+		Player2RemainingMs:     s.currentRemainingMsLocked(s.Player2ID, time.Now()),
+		CurrentTurnStartedAt:   s.CurrentTurnStartedAt,
+		DrawOfferedBy:          s.DrawOfferedBy,
+		DrawOfferedAt:          s.DrawOfferedAt,
+		InitialFEN:             s.InitialFEN,
+		FEN:                    s.FEN,
+		LastMove:               s.LastMove,
+		WinnerID:               s.WinnerID,
+		FinishedReason:         s.FinishedReason,
+		RootPositionHash:       s.RootPositionHash,
+		CurrentPositionHash:    s.CurrentPositionHash,
+		VariantPly:             s.VariantPly,
+		BotGame:                s.BotGame,
+		BotDifficulty:          s.BotDifficulty,
+		LegalMoves:             s.legalMovesLocked(),
+		Moves:                  moves,
 	}
 }
 
@@ -462,6 +533,104 @@ func (s *Session) FinishDraw(reason string) State {
 	s.Status = StatusFinished
 	s.WinnerID = ""
 	s.FinishedReason = reason
+	s.CurrentTurnStartedAt = time.Time{}
+	s.DrawOfferedBy = ""
+	s.DrawOfferedAt = time.Time{}
+
+	return s.snapshotLocked()
+}
+
+func (s *Session) Timeout(now time.Time) (State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.Status == StatusFinished {
+		return State{}, ErrGameFinished
+	}
+	if s.Status != StatusActive {
+		return State{}, ErrGameNotActive
+	}
+	if !s.hasTimedClockLocked() {
+		return State{}, ErrUntimedGame
+	}
+	if s.CurrentTurnUserID == "" {
+		return State{}, ErrClockStillRunning
+	}
+	if s.currentRemainingDurationLocked(s.CurrentTurnUserID, now) > 0 {
+		return State{}, ErrClockStillRunning
+	}
+
+	s.setRemainingDurationLocked(s.CurrentTurnUserID, 0)
+	return s.finishTimeoutLocked(s.CurrentTurnUserID), nil
+}
+
+func (s *Session) hasTimedClockLocked() bool {
+	return s.TimeControlID != "" &&
+		s.TimeControlID != TimeControlUnlimited &&
+		s.TimeControlBaseMs > 0
+}
+
+func (s *Session) timeIncrementLocked() time.Duration {
+	return time.Duration(s.TimeControlIncrement) * time.Millisecond
+}
+
+func (s *Session) currentRemainingMsLocked(userID string, now time.Time) int64 {
+	return durationToMilliseconds(s.currentRemainingDurationLocked(userID, now))
+}
+
+func (s *Session) currentRemainingDurationLocked(userID string, now time.Time) time.Duration {
+	if userID == "" {
+		return 0
+	}
+
+	var remainingMs int64
+	switch userID {
+	case s.Player1ID:
+		remainingMs = s.Player1RemainingMs
+	case s.Player2ID:
+		remainingMs = s.Player2RemainingMs
+	default:
+		return 0
+	}
+
+	remaining := time.Duration(remainingMs) * time.Millisecond
+	if !s.hasTimedClockLocked() || s.Status != StatusActive || s.CurrentTurnUserID != userID || s.CurrentTurnStartedAt.IsZero() {
+		if remaining < 0 {
+			return 0
+		}
+		return remaining
+	}
+
+	elapsed := now.Sub(s.CurrentTurnStartedAt)
+	if elapsed <= 0 {
+		return remaining
+	}
+	if elapsed >= remaining {
+		return 0
+	}
+	return remaining - elapsed
+}
+
+func (s *Session) setRemainingDurationLocked(userID string, value time.Duration) {
+	remainingMs := durationToMilliseconds(value)
+	switch userID {
+	case s.Player1ID:
+		s.Player1RemainingMs = remainingMs
+	case s.Player2ID:
+		s.Player2RemainingMs = remainingMs
+	}
+}
+
+func (s *Session) finishTimeoutLocked(loserID string) State {
+	winnerID := s.Player1ID
+	if loserID == s.Player1ID {
+		winnerID = s.Player2ID
+	}
+
+	s.Status = StatusFinished
+	s.WinnerID = winnerID
+	s.FinishedReason = "timeout"
+	s.CurrentTurnStartedAt = time.Time{}
 	s.DrawOfferedBy = ""
 	s.DrawOfferedAt = time.Time{}
 

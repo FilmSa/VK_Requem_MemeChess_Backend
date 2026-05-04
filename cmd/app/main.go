@@ -79,11 +79,13 @@ func main() {
 	gameService.SetUserRepository(userRepo)
 	wsHandler := ws.NewHandler(hub, gameService, jwtManager)
 	gameHTTP := &game.HTTP{
-		Svc:         gameService,
-		JWT:         jwtManager,
-		AuthService: authService,
-		UserRepo:    userRepo,
-		JoinBase:    cfg.FrontendJoinBase,
+		Svc:               gameService,
+		JWT:               jwtManager,
+		AuthService:       authService,
+		UserRepo:          userRepo,
+		JoinBase:          cfg.FrontendJoinBase,
+		BroadcastState:    hub.BroadcastGameState,
+		BroadcastFinished: hub.BroadcastGameFinished,
 	}
 	analyzerHTTP, gameAnalyzer, err := analyzer.NewHTTPHandler(pg.Pool)
 	if err != nil {
@@ -114,6 +116,10 @@ func main() {
 		}
 		if len(parts) == 2 && parts[0] != "" && parts[1] == "resign" {
 			gameHTTP.PostResign(w, r, parts[0])
+			return
+		}
+		if len(parts) == 2 && parts[0] != "" && parts[1] == "timeout" {
+			gameHTTP.PostTimeout(w, r, parts[0])
 			return
 		}
 		if len(parts) == 3 && parts[0] != "" && parts[1] == "draw" && parts[2] == "offer" {
