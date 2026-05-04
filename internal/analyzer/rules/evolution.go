@@ -4,18 +4,20 @@ import "meme_chess/internal/analyzer/position"
 
 type EvolutionRuleSet struct {
 	*ClassicalRuleSet
-	RookRampage bool
+	RookRampage  bool
+	BishopPierce bool
 }
 
-func NewEvolutionRuleSet(rookRampage bool) *EvolutionRuleSet {
+func NewEvolutionRuleSet(rookRampage bool, bishopPierce bool) *EvolutionRuleSet {
 	return &EvolutionRuleSet{
 		ClassicalRuleSet: NewClassicalRuleSet(),
 		RookRampage:      rookRampage,
+		BishopPierce:     bishopPierce,
 	}
 }
 
 func (r *EvolutionRuleSet) IsLegalMove(gs *position.GameState, mv position.Move) error {
-	if !r.RookRampage {
+	if !r.RookRampage && !r.BishopPierce {
 		return r.ClassicalRuleSet.IsLegalMove(gs, mv)
 	}
 
@@ -81,6 +83,12 @@ func (r *EvolutionRuleSet) IsCheck(gs *position.GameState, color position.Color)
 }
 
 func (r *EvolutionRuleSet) isPseudoLegal(gs *position.GameState, mv position.Move, piece position.Piece) bool {
+	if piece.Type == position.Bishop && r.BishopPierce {
+		df := mv.To.File() - mv.From.File()
+		dr := mv.To.Rank() - mv.From.Rank()
+		return abs(df) == abs(dr) && isBishopPiercePathClear(gs, mv.From, mv.To)
+	}
+
 	if piece.Type != position.Rook {
 		return r.ClassicalRuleSet.isPseudoLegal(gs, mv, piece)
 	}
@@ -99,6 +107,12 @@ func (r *EvolutionRuleSet) isPseudoLegal(gs *position.GameState, mv position.Mov
 }
 
 func (r *EvolutionRuleSet) attacksSquare(gs *position.GameState, from, to position.Square, piece position.Piece) bool {
+	if piece.Type == position.Bishop && r.BishopPierce {
+		df := to.File() - from.File()
+		dr := to.Rank() - from.Rank()
+		return abs(df) == abs(dr) && isBishopPiercePathClear(gs, from, to)
+	}
+
 	if piece.Type != position.Rook || !r.RookRampage {
 		return AttacksSquare(gs, from, to, piece)
 	}
@@ -128,4 +142,23 @@ func containsKingOnPath(gs *position.GameState, from, to position.Square, includ
 	}
 
 	return false
+}
+
+func isBishopPiercePathClear(gs *position.GameState, from, to position.Square) bool {
+	df := sign(to.File() - from.File())
+	dr := sign(to.Rank() - from.Rank())
+
+	f := from.File() + df
+	r := from.Rank() + dr
+	for f != to.File() || r != to.Rank() {
+		sq := position.MustSquare(f, r)
+		piece := gs.PieceAt(sq)
+		if !piece.IsZero() && piece.Type != position.Pawn {
+			return false
+		}
+		f += df
+		r += dr
+	}
+
+	return true
 }

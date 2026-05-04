@@ -18,7 +18,7 @@ type evolutionAbilities struct {
 	pawnCounter  bool
 	kingRevenge  bool
 	doubleKnight bool
-	knightPierce bool
+	bishopPierce bool
 	rookRampage  bool
 }
 
@@ -101,7 +101,7 @@ func (e *evolutionRuntime) ApplyMove(raw string) (MoveResult, error) {
 	e.turns++
 
 	abilitiesAfter := e.abilitiesForTurn(e.turns)
-	ruleSet := rules.NewEvolutionRuleSet(abilitiesAfter.rookRampage)
+	ruleSet := rules.NewEvolutionRuleSet(abilitiesAfter.rookRampage, abilitiesAfter.bishopPierce)
 	isCheck := ruleSet.IsCheck(e.state, e.state.SideToMove)
 	isCheckmate := isCheck && !e.hasLegalTurn(e.state, abilitiesAfter)
 
@@ -127,11 +127,11 @@ func (e *evolutionRuntime) ApplyMove(raw string) (MoveResult, error) {
 
 func (e *evolutionRuntime) abilitiesForTurn(turns int) evolutionAbilities {
 	return evolutionAbilities{
-		pawnCounter:  turns >= 10,
-		kingRevenge:  turns >= 14,
-		doubleKnight: turns >= 20,
-		knightPierce: turns >= 30,
-		rookRampage:  turns >= 30,
+		pawnCounter:  turns >= 5,
+		kingRevenge:  turns >= 7,
+		doubleKnight: turns >= 10,
+		bishopPierce: turns >= 15,
+		rookRampage:  turns >= 20,
 	}
 }
 
@@ -158,7 +158,7 @@ func (e *evolutionRuntime) applyAtomic(gs *position.GameState, raw string, abili
 		return atomicOutcome{}, ErrInvalidMove
 	}
 
-	ruleSet := rules.NewEvolutionRuleSet(abilities.rookRampage)
+	ruleSet := rules.NewEvolutionRuleSet(abilities.rookRampage, abilities.bishopPierce)
 	if err := ruleSet.IsLegalMove(gs, mv); err != nil {
 		return atomicOutcome{}, err
 	}
@@ -196,10 +196,6 @@ func (e *evolutionRuntime) executeAtomic(gs *position.GameState, mv position.Mov
 	}
 
 	captured := !capturedPiece.IsZero()
-	if abilities.knightPierce && piece.Type == position.Knight && capturedPiece.Type == position.Pawn {
-		captured = e.captureBehindKnightVector(gs, mv, piece.Color) || captured
-	}
-
 	if abilities.pawnCounter && piece.Type == position.Pawn && capturedPiece.Type == position.Pawn {
 		hit, err := e.rng.Intn(2)
 		if err != nil {
@@ -237,25 +233,6 @@ func (e *evolutionRuntime) executeRookRampageMove(gs *position.GameState, mv pos
 	}
 
 	return captured, nil
-}
-
-func (e *evolutionRuntime) captureBehindKnightVector(gs *position.GameState, mv position.Move, mover position.Color) bool {
-	df := mv.To.File() - mv.From.File()
-	dr := mv.To.Rank() - mv.From.Rank()
-
-	file := mv.To.File() + df
-	rank := mv.To.Rank() + dr
-	if file < 0 || file > 7 || rank < 0 || rank > 7 {
-		return false
-	}
-
-	sq := position.MustSquare(file, rank)
-	piece := gs.PieceAt(sq)
-	if piece.IsZero() || piece.Color == mover || piece.Type == position.King {
-		return false
-	}
-
-	return e.removePieceWithCastlingImpact(gs, sq)
 }
 
 func (e *evolutionRuntime) removePieceWithCastlingImpact(gs *position.GameState, sq position.Square) bool {

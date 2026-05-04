@@ -167,7 +167,7 @@ func TestFischerCastleAllowsStationaryKingNotation(t *testing.T) {
 func TestEvolutionPawnCounterRemovesAttackingPawn(t *testing.T) {
 	runtime := &evolutionRuntime{
 		state: emptyState(position.White),
-		turns: 10,
+		turns: 5,
 		rng:   &stubRandomizer{values: []int{0}},
 	}
 	runtime.state.SetPiece(position.MustSquare(4, 0), position.Piece{Type: position.King, Color: position.White})
@@ -201,7 +201,7 @@ func TestEvolutionKingRevengeCancelsSinglePieceMate(t *testing.T) {
 
 	runtime := &evolutionRuntime{
 		state: state,
-		turns: 14,
+		turns: 7,
 		rng:   &stubRandomizer{},
 	}
 
@@ -231,7 +231,7 @@ func TestEvolutionKingRevengeOnlyWorksOncePerColor(t *testing.T) {
 
 	runtime := &evolutionRuntime{
 		state: state,
-		turns: 14,
+		turns: 7,
 		kingRevengeUsed: map[position.Color]bool{
 			position.White: true,
 		},
@@ -253,7 +253,7 @@ func TestEvolutionKingRevengeOnlyWorksOncePerColor(t *testing.T) {
 func TestEvolutionKnightCanMoveTwiceInOneTurn(t *testing.T) {
 	runtime := &evolutionRuntime{
 		state: emptyState(position.White),
-		turns: 20,
+		turns: 10,
 		rng:   &stubRandomizer{},
 	}
 	runtime.state.SetPiece(position.MustSquare(4, 0), position.Piece{Type: position.King, Color: position.White})
@@ -272,34 +272,37 @@ func TestEvolutionKnightCanMoveTwiceInOneTurn(t *testing.T) {
 	}
 }
 
-func TestEvolutionKnightPiercesPieceBehindPawn(t *testing.T) {
+func TestEvolutionBishopPiercesThroughPawn(t *testing.T) {
 	runtime := &evolutionRuntime{
 		state: emptyState(position.White),
-		turns: 30,
+		turns: 15,
 		rng:   &stubRandomizer{},
 	}
-	runtime.state.SetPiece(position.MustSquare(4, 0), position.Piece{Type: position.King, Color: position.White})
-	runtime.state.SetPiece(position.MustSquare(4, 7), position.Piece{Type: position.King, Color: position.Black})
-	runtime.state.SetPiece(position.MustSquare(1, 0), position.Piece{Type: position.Knight, Color: position.White})
-	runtime.state.SetPiece(position.MustSquare(2, 2), position.Piece{Type: position.Pawn, Color: position.Black})
-	runtime.state.SetPiece(position.MustSquare(3, 4), position.Piece{Type: position.Bishop, Color: position.Black})
+	runtime.state.SetPiece(position.MustSquare(7, 0), position.Piece{Type: position.King, Color: position.White})
+	runtime.state.SetPiece(position.MustSquare(0, 7), position.Piece{Type: position.King, Color: position.Black})
+	runtime.state.SetPiece(position.MustSquare(2, 0), position.Piece{Type: position.Bishop, Color: position.White})
+	runtime.state.SetPiece(position.MustSquare(3, 1), position.Piece{Type: position.Pawn, Color: position.Black})
+	runtime.state.SetPiece(position.MustSquare(4, 2), position.Piece{Type: position.Knight, Color: position.Black})
 
-	result, err := runtime.ApplyMove("b1c3")
+	result, err := runtime.ApplyMove("c1e3")
 	if err != nil {
 		t.Fatalf("apply move: %v", err)
 	}
 	if !result.IsCapture {
 		t.Fatal("expected capture to be recorded")
 	}
-	if piece := runtime.state.PieceAt(position.MustSquare(3, 4)); !piece.IsZero() {
-		t.Fatalf("expected piece behind pawn to be removed, got %+v", piece)
+	if piece := runtime.state.PieceAt(position.MustSquare(4, 2)); piece.Type != position.Bishop || piece.Color != position.White {
+		t.Fatalf("expected bishop on e3, got %+v", piece)
+	}
+	if piece := runtime.state.PieceAt(position.MustSquare(3, 1)); piece.Type != position.Pawn || piece.Color != position.Black {
+		t.Fatalf("expected pawn on d2 to remain, got %+v", piece)
 	}
 }
 
 func TestEvolutionRookRampageClearsPiecesOnPath(t *testing.T) {
 	runtime := &evolutionRuntime{
 		state: emptyState(position.White),
-		turns: 30,
+		turns: 20,
 		rng:   &stubRandomizer{},
 	}
 	runtime.state.SetPiece(position.MustSquare(4, 0), position.Piece{Type: position.King, Color: position.White})

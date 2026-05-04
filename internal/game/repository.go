@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,7 +36,7 @@ func (r *Repository) CreateGame(ctx context.Context, p CreateGameParams) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	query := `
+	queryWithMode := `
 		INSERT INTO games (
 			id, player1_id, player2_id, status, bet_amount, meme_mode, game_mode, fen, current_turn_user_id
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -46,7 +47,7 @@ func (r *Repository) CreateGame(ctx context.Context, p CreateGameParams) error {
 		player2 = *p.Player2ID
 	}
 
-	_, err := r.pool.Exec(ctx, query,
+	_, err := r.pool.Exec(ctx, queryWithMode,
 		p.GameID,
 		p.Player1ID,
 		player2,
@@ -58,10 +59,44 @@ func (r *Repository) CreateGame(ctx context.Context, p CreateGameParams) error {
 		p.CurrentTurnUserID,
 	)
 	if err != nil {
-		return fmt.Errorf("insert game: %w", err)
+		if !isMissingGameModeColumn(err) {
+			return fmt.Errorf("insert game: %w", err)
+		}
+
+		legacyQuery := `
+			INSERT INTO games (
+				id, player1_id, player2_id, status, bet_amount, meme_mode, fen, current_turn_user_id
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`
+
+		_, legacyErr := r.pool.Exec(ctx, legacyQuery,
+			p.GameID,
+			p.Player1ID,
+			player2,
+			p.Status,
+			p.BetAmount,
+			p.MemeMode,
+			p.FEN,
+			p.CurrentTurnUserID,
+		)
+		if legacyErr != nil {
+			return fmt.Errorf("insert game: %w", legacyErr)
+		}
+
+		return nil
 	}
 
 	return nil
+}
+
+func isMissingGameModeColumn(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "game_mode") &&
+		(strings.Contains(msg, "does not exist") || strings.Contains(msg, "unknown column"))
 }
 
 func (r *Repository) SetPlayer2(ctx context.Context, gameID, player2ID string) error {

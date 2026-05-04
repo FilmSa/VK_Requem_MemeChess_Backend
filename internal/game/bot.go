@@ -165,7 +165,7 @@ func evolutionNegamax(runtime *evolutionRuntime, depth int, ply int, alpha int, 
 	abilities := runtime.abilitiesForTurn(runtime.turns)
 	moves := generateEvolutionLegalMoves(runtime)
 	if len(moves) == 0 {
-		ruleSet := rules.NewEvolutionRuleSet(abilities.rookRampage)
+		ruleSet := rules.NewEvolutionRuleSet(abilities.rookRampage, abilities.bishopPierce)
 		if ruleSet.IsCheck(runtime.state, runtime.state.SideToMove) {
 			return -botMateScore + ply
 		}
