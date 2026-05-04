@@ -392,6 +392,8 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 	s.mu.Unlock()
 
 	agreedStake := maxInt64(in.MinStake, waiting.MinStake)
+	matchedMode := waiting.GameMode
+	matchedTimeControlID := waiting.TimeControlID
 	if s.userRepo != nil {
 		if err := s.userRepo.ReserveGameCurrency(ctx, in.UserID, agreedStake); err != nil {
 			return MatchSearchResult{}, err
@@ -402,7 +404,15 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 		}
 	}
 
-	gameID, err := s.createMatchedGame(ctx, in.UserID, waiting.UserID, agreedStake, mode, engine, timeControlID)
+	gameID, err := s.createMatchedGame(
+		ctx,
+		in.UserID,
+		waiting.UserID,
+		agreedStake,
+		matchedMode,
+		engine,
+		matchedTimeControlID,
+	)
 	if err != nil {
 		if s.userRepo != nil {
 			_ = s.userRepo.AddGameCurrency(ctx, in.UserID, agreedStake)
@@ -416,8 +426,8 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 		GameID:        gameID,
 		AgreedStake:   agreedStake,
 		GameCurrency:  "game_currency",
-		GameMode:      mode,
-		TimeControlID: timeControlID,
+		GameMode:      matchedMode,
+		TimeControlID: matchedTimeControlID,
 	}
 
 	s.mu.Lock()

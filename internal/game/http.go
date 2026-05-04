@@ -59,12 +59,14 @@ type inviteParticipant struct {
 }
 
 type inviteJoinResponse struct {
-	GameID       string            `json:"game_id"`
-	InviteToken  string            `json:"invite_token"`
-	PlayURL      string            `json:"play_url"`
-	SessionToken string            `json:"session_token"`
-	Player       inviteParticipant `json:"player"`
-	Status       string            `json:"status"`
+	GameID        string            `json:"game_id"`
+	InviteToken   string            `json:"invite_token"`
+	PlayURL       string            `json:"play_url"`
+	GameMode      string            `json:"game_mode"`
+	TimeControlID string            `json:"time_control_id,omitempty"`
+	SessionToken  string            `json:"session_token"`
+	Player        inviteParticipant `json:"player"`
+	Status        string            `json:"status"`
 }
 
 type participantsResponse struct {
@@ -377,12 +379,14 @@ func (h *HTTP) PostInviteJoin(w http.ResponseWriter, r *http.Request, inviteToke
 	}
 
 	writeJSON(w, http.StatusOK, inviteJoinResponse{
-		GameID:       state.GameID,
-		InviteToken:  inviteToken,
-		PlayURL:      h.JoinBase + "/play?game=" + state.GameID,
-		SessionToken: sessionToken,
-		Player:       buildInviteParticipant(participant),
-		Status:       state.Status,
+		GameID:        state.GameID,
+		InviteToken:   inviteToken,
+		PlayURL:       h.JoinBase + "/play?game=" + state.GameID,
+		GameMode:      state.GameMode,
+		TimeControlID: state.TimeControlID,
+		SessionToken:  sessionToken,
+		Player:        buildInviteParticipant(participant),
+		Status:        state.Status,
 	})
 }
 
