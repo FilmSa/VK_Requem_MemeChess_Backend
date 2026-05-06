@@ -96,9 +96,9 @@ func (s *PostgresStore) GetPosition(hash string) (*PositionAnalysis, bool) {
 
 	for rows.Next() {
 		var (
-			moveKey          string
-			tagsJSON         []byte
-			move             MoveAnalysis
+			moveKey  string
+			tagsJSON []byte
+			move     MoveAnalysis
 		)
 
 		if err := rows.Scan(&moveKey, &move.ScoreCP, &move.DeltaCP, &move.Quality, &tagsJSON, &move.Depth, &move.NextPositionHash, &move.Ready); err != nil {

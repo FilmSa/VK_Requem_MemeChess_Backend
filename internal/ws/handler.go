@@ -5,6 +5,7 @@ import (
 
 	"meme_chess/internal/auth"
 	"meme_chess/internal/game"
+	"meme_chess/internal/inventory"
 
 	"github.com/gorilla/websocket"
 )
@@ -12,14 +13,16 @@ import (
 type Handler struct {
 	hub         *Hub
 	gameService *game.Service
+	invService  *inventory.Service
 	jwtManager  *auth.JWTManager
 	upgrader    websocket.Upgrader
 }
 
-func NewHandler(hub *Hub, gameService *game.Service, jwtManager *auth.JWTManager) *Handler {
+func NewHandler(hub *Hub, gameService *game.Service, invService *inventory.Service, jwtManager *auth.JWTManager) *Handler {
 	return &Handler{
 		hub:         hub,
 		gameService: gameService,
+		invService:  invService,
 		jwtManager:  jwtManager,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -49,7 +52,7 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := NewClient(h.hub, h.gameService, conn, claims.UserID)
+	client := NewClient(h.hub, h.gameService, h.invService, conn, claims.UserID)
 	h.hub.register <- client
 
 	go client.writePump()

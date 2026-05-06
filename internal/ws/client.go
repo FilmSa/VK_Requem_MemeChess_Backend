@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"meme_chess/internal/game"
+	"meme_chess/internal/inventory"
 
 	"github.com/gorilla/websocket"
 )
@@ -23,16 +24,18 @@ const (
 type Client struct {
 	hub         *Hub
 	gameService *game.Service
+	invService  *inventory.Service
 	conn        *websocket.Conn
 	send        chan []byte
 	userID      string
 	gameIDs     map[string]struct{}
 }
 
-func NewClient(hub *Hub, gameService *game.Service, conn *websocket.Conn, userID string) *Client {
+func NewClient(hub *Hub, gameService *game.Service, invService *inventory.Service, conn *websocket.Conn, userID string) *Client {
 	return &Client{
 		hub:         hub,
 		gameService: gameService,
+		invService:  invService,
 		conn:        conn,
 		send:        make(chan []byte, 256),
 		userID:      userID,
@@ -434,6 +437,7 @@ func (c *Client) handleGameSticker(msg IncomingMessage) {
 	}
 
 	payload.GameID = strings.TrimSpace(payload.GameID)
+	payload.StickerSlug = strings.TrimSpace(payload.StickerSlug)
 	payload.StickerID = strings.TrimSpace(payload.StickerID)
 	payload.Title = strings.TrimSpace(payload.Title)
 	payload.AssetURL = strings.TrimSpace(payload.AssetURL)
@@ -443,10 +447,6 @@ func (c *Client) handleGameSticker(msg IncomingMessage) {
 	payload.SoundURL = strings.TrimSpace(payload.SoundURL)
 	if payload.GameID == "" {
 		c.sendError(msg.RequestID, "BAD_REQUEST", "game_id is required")
-		return
-	}
-	if payload.AssetURL == "" {
-		c.sendError(msg.RequestID, "BAD_REQUEST", "asset_url is required")
 		return
 	}
 	if _, ok := c.gameIDs[payload.GameID]; !ok {
@@ -464,33 +464,62 @@ func (c *Client) handleGameSticker(msg IncomingMessage) {
 		return
 	}
 
+	if payload.StickerSlug != "" {
+		if c.invService == nil {
+			c.sendError(msg.RequestID, "INVENTORY_UNAVAILABLE", "inventory service unavailable")
+			return
+		}
+		assetURL, err := c.invService.ResolveSelectedStickerAssetURL(context.Background(), c.userID, payload.StickerSlug)
+		if err != nil {
+			switch {
+			case errors.Is(err, inventory.ErrStickerNotSelected):
+				c.sendError(msg.RequestID, "STICKER_NOT_SELECTED", "sticker is not selected")
+			case errors.Is(err, inventory.ErrItemNotOwned):
+				c.sendError(msg.RequestID, "STICKER_NOT_OWNED", "sticker is not owned")
+			case errors.Is(err, inventory.ErrItemNotFound):
+				c.sendError(msg.RequestID, "STICKER_NOT_FOUND", "sticker not found")
+			default:
+				c.sendError(msg.RequestID, "INTERNAL_ERROR", "failed to resolve sticker")
+			}
+			return
+		}
+		payload.AssetURL = strings.TrimSpace(assetURL)
+	}
+
+	if payload.AssetURL == "" {
+		c.sendError(msg.RequestID, "BAD_REQUEST", "asset_url or sticker_slug is required")
+		return
+	}
+
 	c.sendJSON(OutgoingMessage{
 		Type:      "game.sticker.accepted",
 		RequestID: msg.RequestID,
 		Payload: map[string]string{
-			"game_id":    payload.GameID,
-			"sticker_id": payload.StickerID,
-			"title":      payload.Title,
-			"asset_url":  payload.AssetURL,
-			"media_type": payload.MediaType,
-			"image_url":  payload.ImageURL,
-			"video_url":  payload.VideoURL,
-			"sound_url":  payload.SoundURL,
+			"game_id":      payload.GameID,
+			"sticker_slug": payload.StickerSlug,
+			"sticker_id":   payload.StickerID,
+			"title":        payload.Title,
+			"asset_url":    payload.AssetURL,
+			"media_type":   payload.MediaType,
+			"image_url":    payload.ImageURL,
+			"video_url":    payload.VideoURL,
+			"sound_url":    payload.SoundURL,
 		},
 	})
 
 	c.broadcastJSON(payload.GameID, OutgoingMessage{
 		Type: "game.sticker",
 		Payload: map[string]string{
-			"game_id":    payload.GameID,
-			"by_user_id": c.userID,
-			"sticker_id": payload.StickerID,
-			"title":      payload.Title,
-			"asset_url":  payload.AssetURL,
-			"media_type": payload.MediaType,
-			"image_url":  payload.ImageURL,
-			"video_url":  payload.VideoURL,
-			"sound_url":  payload.SoundURL,
+			"game_id":      payload.GameID,
+			"by_user_id":   c.userID,
+			"sticker_slug": payload.StickerSlug,
+			"sticker_id":   payload.StickerID,
+			"title":        payload.Title,
+			"asset_url":    payload.AssetURL,
+			"media_type":   payload.MediaType,
+			"image_url":    payload.ImageURL,
+			"video_url":    payload.VideoURL,
+			"sound_url":    payload.SoundURL,
 		},
 	})
 }
@@ -507,50 +536,22 @@ func (c *Client) handleGameEmote(msg IncomingMessage) {
 		return
 	}
 
+	emoteSlug := strings.TrimSpace(payload.EmoteSlug)
 	emoteMP4 := strings.TrimSpace(payload.EmoteMP4)
-	if emoteMP4 == "" {
-		c.sendError(msg.RequestID, "BAD_REQUEST", "emote_mp4 is required")
-		return
+	stickerPayload := GameStickerPayload{
+		GameID:      strings.TrimSpace(payload.GameID),
+		StickerSlug: emoteSlug,
+		AssetURL:    emoteMP4,
+		MediaType:   "",
+		ImageURL:    "",
+		VideoURL:    "",
+		SoundURL:    "",
 	}
-	if len(emoteMP4) > 1024 {
-		c.sendError(msg.RequestID, "BAD_REQUEST", "emote_mp4 is too long")
-		return
-	}
-	if !strings.HasSuffix(strings.ToLower(emoteMP4), ".mp4") {
-		c.sendError(msg.RequestID, "BAD_REQUEST", "emote_mp4 must be an mp4 path or URL")
-		return
-	}
-	if _, ok := c.gameIDs[payload.GameID]; !ok {
-		c.sendError(msg.RequestID, "GAME_NOT_JOINED", "join the game room before sending emotes")
-		return
-	}
-
-	session, ok := c.gameService.GetSession(payload.GameID)
-	if !ok {
-		c.sendError(msg.RequestID, "GAME_NOT_FOUND", "game not found")
-		return
-	}
-	if !session.HasPlayer(c.userID) {
-		c.sendError(msg.RequestID, "FORBIDDEN", "you are not a participant of this game")
-		return
-	}
-
-	c.sendJSON(OutgoingMessage{
-		Type:      "game.emote.accepted",
+	raw, _ := json.Marshal(stickerPayload)
+	c.handleGameSticker(IncomingMessage{
+		Type:      "game.sticker",
 		RequestID: msg.RequestID,
-		Payload: map[string]string{
-			"game_id":   payload.GameID,
-			"emote_mp4": emoteMP4,
-		},
-	})
-
-	c.broadcastJSON(payload.GameID, OutgoingMessage{
-		Type: "game.emote",
-		Payload: map[string]string{
-			"game_id":    payload.GameID,
-			"by_user_id": c.userID,
-			"emote_mp4":  emoteMP4,
-		},
+		Payload:   raw,
 	})
 }
 

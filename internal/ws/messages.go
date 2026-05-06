@@ -38,17 +38,19 @@ type GameDrawPayload struct {
 }
 
 type GameEmotePayload struct {
-	GameID   string `json:"game_id"`
-	EmoteMP4 string `json:"emote_mp4"`
+	GameID    string `json:"game_id"`
+	EmoteSlug string `json:"emote_slug,omitempty"`
+	EmoteMP4  string `json:"emote_mp4"`
 }
 
 type GameStickerPayload struct {
-	GameID    string `json:"game_id"`
-	StickerID string `json:"sticker_id,omitempty"`
-	Title     string `json:"title,omitempty"`
-	AssetURL  string `json:"asset_url"`
-	MediaType string `json:"media_type,omitempty"`
-	ImageURL  string `json:"image_url,omitempty"`
-	VideoURL  string `json:"video_url,omitempty"`
-	SoundURL  string `json:"sound_url,omitempty"`
+	GameID      string `json:"game_id"`
+	StickerSlug string `json:"sticker_slug,omitempty"`
+	StickerID   string `json:"sticker_id,omitempty"`
+	Title       string `json:"title,omitempty"`
+	AssetURL    string `json:"asset_url"`
+	MediaType   string `json:"media_type,omitempty"`
+	ImageURL    string `json:"image_url,omitempty"`
+	VideoURL    string `json:"video_url,omitempty"`
+	SoundURL    string `json:"sound_url,omitempty"`
 }

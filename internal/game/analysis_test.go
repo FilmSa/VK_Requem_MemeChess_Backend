@@ -8,9 +8,9 @@ import (
 )
 
 type stubMoveAnalyzer struct {
-	started []string
+	started  []string
 	recorded []string
-	result  *analysis.Result
+	result   *analysis.Result
 }
 
 func (s *stubMoveAnalyzer) StartGame(gameID string) {
