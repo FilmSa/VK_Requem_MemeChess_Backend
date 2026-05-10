@@ -311,7 +311,7 @@ func TestTimeout_FinishesTimedGame(t *testing.T) {
 	}
 }
 
-func TestTimedGameClockStartsAfterSecondPlayerFirstMove(t *testing.T) {
+func TestTimedGameClockStartsWhenTimedGameBecomesActive(t *testing.T) {
 	svc := NewService(nil)
 
 	_, err := svc.CreateGameWithTimeControl(
@@ -343,7 +343,7 @@ func TestTimedGameClockStartsAfterSecondPlayerFirstMove(t *testing.T) {
 
 	initial := session.Snapshot()
 	if !initial.CurrentTurnStartedAt.IsZero() {
-		t.Fatal("expected clock to stay idle until the second player makes the first move")
+		t.Fatal("expected clock to stay paused until the second move in a timed game")
 	}
 	if initial.Player1RemainingMs != 15*60*1000 {
 		t.Fatalf("expected full initial time for player1, got %d", initial.Player1RemainingMs)
@@ -359,10 +359,14 @@ func TestTimedGameClockStartsAfterSecondPlayerFirstMove(t *testing.T) {
 		t.Fatalf("white first move failed: %v", err)
 	}
 	if !afterWhiteMove.CurrentTurnStartedAt.IsZero() {
-		t.Fatal("expected clock to remain idle after the first player's opening move")
+		t.Fatal("expected clock to remain paused after the opening move")
 	}
 	if afterWhiteMove.Player1RemainingMs != initial.Player1RemainingMs {
-		t.Fatalf("expected player1 time to remain unchanged before clock start, got %d", afterWhiteMove.Player1RemainingMs)
+		t.Fatalf(
+			"expected player1 time to stay unchanged while the clock is paused, got initial=%d after=%d",
+			initial.Player1RemainingMs,
+			afterWhiteMove.Player1RemainingMs,
+		)
 	}
 
 	time.Sleep(20 * time.Millisecond)
@@ -372,10 +376,14 @@ func TestTimedGameClockStartsAfterSecondPlayerFirstMove(t *testing.T) {
 		t.Fatalf("black first move failed: %v", err)
 	}
 	if afterBlackMove.CurrentTurnStartedAt.IsZero() {
-		t.Fatal("expected clock to start after the second player's first move")
+		t.Fatal("expected clock to start after the second move")
 	}
 	if afterBlackMove.Player2RemainingMs != initial.Player2RemainingMs {
-		t.Fatalf("expected player2 time to remain unchanged before clock start, got %d", afterBlackMove.Player2RemainingMs)
+		t.Fatalf(
+			"expected player2 time to stay unchanged before the clock has ever started, got initial=%d after=%d",
+			initial.Player2RemainingMs,
+			afterBlackMove.Player2RemainingMs,
+		)
 	}
 }
 

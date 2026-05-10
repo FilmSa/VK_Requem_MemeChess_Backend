@@ -321,6 +321,8 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 		}
 		if s.hasTimedClockLocked() && len(s.Moves) >= 2 {
 			s.CurrentTurnStartedAt = time.Now()
+		} else {
+			s.CurrentTurnStartedAt = time.Time{}
 		}
 	}
 
