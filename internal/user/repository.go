@@ -249,3 +249,45 @@ func (r *Repository) ConvertGameToShop1to1(ctx context.Context, userID string, a
 	}
 	return shop, game, nil
 }
+
+var ErrUserNotFound = errors.New("user not found")
+
+func (r *Repository) UpdateProfile(ctx context.Context, userID string, username string, email *string, avatarURL *string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	const q = `
+		UPDATE users
+		SET username = $2, email = $3, avatar_url = $4
+		WHERE id = $1
+	`
+
+	tag, err := r.pool.Exec(ctx, q, userID, username, email, avatarURL)
+	if err != nil {
+		return fmt.Errorf("update profile: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+func (r *Repository) UpdatePasswordHash(ctx context.Context, userID string, passwordHash string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	const q = `
+		UPDATE users
+		SET password_hash = $2
+		WHERE id = $1
+	`
+
+	tag, err := r.pool.Exec(ctx, q, userID, passwordHash)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
