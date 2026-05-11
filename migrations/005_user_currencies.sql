@@ -1,4 +1,4 @@
 ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS shop_currency bigint NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS shop_currency bigint NOT NULL DEFAULT 1000,
     ADD COLUMN IF NOT EXISTS game_currency bigint NOT NULL DEFAULT 1000;
 

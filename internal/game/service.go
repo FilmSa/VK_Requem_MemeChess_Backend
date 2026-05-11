@@ -36,36 +36,37 @@ var (
 const defaultInviteTTL = 15 * time.Minute
 
 type State struct {
-	GameID                 string    `json:"game_id"`
-	GameMode               string    `json:"game_mode"`
-	BotGame                bool      `json:"bot_game,omitempty"`
-	BotDifficulty          string    `json:"bot_difficulty,omitempty"`
-	InitialFEN             string    `json:"initial_fen,omitempty"`
-	LegalMoves             []string  `json:"legal_moves,omitempty"`
-	Player1ID              string    `json:"player1_id"`
-	Player2ID              string    `json:"player2_id"`
-	Player1Connected       bool      `json:"player1_connected"`
-	Player2Connected       bool      `json:"player2_connected"`
-	Status                 string    `json:"status"`
-	CurrentTurnUserID      string    `json:"current_turn_user_id"`
-	BetAmount              int64     `json:"bet_amount,omitempty"`
-	TimeControlID          string    `json:"time_control_id,omitempty"`
-	TimeControlLabel       string    `json:"time_control_label,omitempty"`
-	TimeControlBaseMs      int64     `json:"time_control_base_ms,omitempty"`
-	TimeControlIncrementMs int64     `json:"time_control_increment_ms,omitempty"`
-	Player1RemainingMs     int64     `json:"player1_remaining_ms,omitempty"`
-	Player2RemainingMs     int64     `json:"player2_remaining_ms,omitempty"`
-	CurrentTurnStartedAt   time.Time `json:"current_turn_started_at,omitempty"`
-	DrawOfferedBy          string    `json:"draw_offered_by,omitempty"`
-	DrawOfferedAt          time.Time `json:"draw_offered_at,omitempty"`
-	FEN                    string    `json:"fen"`
-	LastMove               string    `json:"last_move"`
-	WinnerID               string    `json:"winner_id,omitempty"`
-	FinishedReason         string    `json:"finished_reason,omitempty"`
-	RootPositionHash       string    `json:"root_position_hash"`
-	CurrentPositionHash    string    `json:"current_position_hash"`
-	VariantPly             int       `json:"variant_ply"`
-	Moves                  []Move    `json:"moves"`
+	GameID                 string       `json:"game_id"`
+	GameMode               string       `json:"game_mode"`
+	BotGame                bool         `json:"bot_game,omitempty"`
+	BotDifficulty          string       `json:"bot_difficulty,omitempty"`
+	InitialFEN             string       `json:"initial_fen,omitempty"`
+	LegalMoves             []string     `json:"legal_moves,omitempty"`
+	Player1ID              string       `json:"player1_id"`
+	Player2ID              string       `json:"player2_id"`
+	Player1Connected       bool         `json:"player1_connected"`
+	Player2Connected       bool         `json:"player2_connected"`
+	Status                 string       `json:"status"`
+	CurrentTurnUserID      string       `json:"current_turn_user_id"`
+	BetAmount              int64        `json:"bet_amount,omitempty"`
+	TimeControlID          string       `json:"time_control_id,omitempty"`
+	TimeControlLabel       string       `json:"time_control_label,omitempty"`
+	TimeControlBaseMs      int64        `json:"time_control_base_ms,omitempty"`
+	TimeControlIncrementMs int64        `json:"time_control_increment_ms,omitempty"`
+	Player1RemainingMs     int64        `json:"player1_remaining_ms,omitempty"`
+	Player2RemainingMs     int64        `json:"player2_remaining_ms,omitempty"`
+	CurrentTurnStartedAt   time.Time    `json:"current_turn_started_at,omitempty"`
+	DrawOfferedBy          string       `json:"draw_offered_by,omitempty"`
+	DrawOfferedAt          time.Time    `json:"draw_offered_at,omitempty"`
+	FEN                    string       `json:"fen"`
+	LastMove               string       `json:"last_move"`
+	LastMoveEffects        []MoveEffect `json:"last_move_effects,omitempty"`
+	WinnerID               string       `json:"winner_id,omitempty"`
+	FinishedReason         string       `json:"finished_reason,omitempty"`
+	RootPositionHash       string       `json:"root_position_hash"`
+	CurrentPositionHash    string       `json:"current_position_hash"`
+	VariantPly             int          `json:"variant_ply"`
+	Moves                  []Move       `json:"moves"`
 }
 
 type Service struct {
@@ -104,12 +105,12 @@ type MatchSearchInput struct {
 }
 
 type MatchSearchResult struct {
-	Status        string `json:"status"`
-	GameID        string `json:"game_id,omitempty"`
-	AgreedStake   int64  `json:"agreed_stake,omitempty"`
-	GameCurrency  string `json:"game_currency,omitempty"`
-	GameMode      string `json:"game_mode,omitempty"`
-	TimeControlID string `json:"time_control_id,omitempty"`
+	Status       string `json:"status"`
+	GameID       string `json:"game_id,omitempty"`
+	AgreedStake  int64  `json:"agreed_stake,omitempty"`
+	GameCurrency string `json:"game_currency,omitempty"`
+	GameMode     string `json:"game_mode,omitempty"`
+	timeControlPayload
 }
 
 type MatchSearchPreviewInput struct {
@@ -352,7 +353,11 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 				MaxStake:      in.MaxStake,
 			}
 			s.mu.Unlock()
-			return MatchSearchResult{Status: "queued", GameMode: mode, TimeControlID: timeControlID}, nil
+			return MatchSearchResult{
+				Status:             "queued",
+				GameMode:           mode,
+				timeControlPayload: buildTimeControlPayloadFromPreset(timeControlID),
+			}, nil
 		}
 	}
 
@@ -384,7 +389,11 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 			MaxStake:      in.MaxStake,
 		})
 		s.mu.Unlock()
-		return MatchSearchResult{Status: "queued", GameMode: mode, TimeControlID: timeControlID}, nil
+		return MatchSearchResult{
+			Status:             "queued",
+			GameMode:           mode,
+			timeControlPayload: buildTimeControlPayloadFromPreset(timeControlID),
+		}, nil
 	}
 
 	waiting := s.matchQueue[matchIndex]
@@ -422,12 +431,14 @@ func (s *Service) SearchMatch(ctx context.Context, in MatchSearchInput, engine E
 	}
 
 	result := MatchSearchResult{
-		Status:        "matched",
-		GameID:        gameID,
-		AgreedStake:   agreedStake,
-		GameCurrency:  "game_currency",
-		GameMode:      matchedMode,
-		TimeControlID: matchedTimeControlID,
+		Status:       "matched",
+		GameID:       gameID,
+		AgreedStake:  agreedStake,
+		GameCurrency: "game_currency",
+		GameMode:     matchedMode,
+		timeControlPayload: buildTimeControlPayloadFromPreset(
+			matchedTimeControlID,
+		),
 	}
 
 	s.mu.Lock()

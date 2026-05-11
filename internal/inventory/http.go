@@ -69,7 +69,8 @@ func (h *HTTP) GetMyInventory(w http.ResponseWriter, r *http.Request) {
 type setSelectionRequest struct {
 	PieceSkinSlug *string  `json:"piece_skin_slug"`
 	BoardSkinSlug *string  `json:"board_skin_slug"`
-	StickerSlugs  []string `json:"sticker_slugs"`
+	EmoteSlugs    []string `json:"emote_slugs"`
+	StickerSlugs  []string `json:"sticker_slugs,omitempty"`
 }
 
 func (h *HTTP) PutMySelection(w http.ResponseWriter, r *http.Request) {
@@ -99,11 +100,11 @@ func (h *HTTP) PutMySelection(w http.ResponseWriter, r *http.Request) {
 	sel, err := h.Svc.SetSelection(r.Context(), u.ID, Selection{
 		PieceSkinSlug: req.PieceSkinSlug,
 		BoardSkinSlug: req.BoardSkinSlug,
-		StickerSlugs:  req.StickerSlugs,
+		EmoteSlugs:    resolveEmoteSlugs(req),
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrTooManyStickers), errors.Is(err, ErrDuplicateStickers):
+		case errors.Is(err, ErrTooManyEmotes), errors.Is(err, ErrDuplicateEmotes):
 			writeError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, ErrItemNotOwned):
 			writeError(w, http.StatusForbidden, err.Error())
@@ -118,6 +119,13 @@ func (h *HTTP) PutMySelection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"selected": sel,
 	})
+}
+
+func resolveEmoteSlugs(req setSelectionRequest) []string {
+	if len(req.EmoteSlugs) > 0 {
+		return req.EmoteSlugs
+	}
+	return req.StickerSlugs
 }
 
 func RegisterRoutes(mux *http.ServeMux, h *HTTP) {

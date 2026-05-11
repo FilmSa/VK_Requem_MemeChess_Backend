@@ -14,13 +14,14 @@ const (
 )
 
 type Move struct {
-	Number      int    `json:"number"`
-	UserID      string `json:"user_id"`
-	Move        string `json:"move"`
-	FEN         string `json:"fen"`
-	IsCapture   bool   `json:"is_capture"`
-	IsCheck     bool   `json:"is_check"`
-	IsCheckmate bool   `json:"is_checkmate"`
+	Number      int          `json:"number"`
+	UserID      string       `json:"user_id"`
+	Move        string       `json:"move"`
+	FEN         string       `json:"fen"`
+	IsCapture   bool         `json:"is_capture"`
+	IsCheck     bool         `json:"is_check"`
+	IsCheckmate bool         `json:"is_checkmate"`
+	Effects     []MoveEffect `json:"effects,omitempty"`
 }
 
 type Session struct {
@@ -49,14 +50,15 @@ type Session struct {
 	Player2RemainingMs   int64     `json:"player2_remaining_ms,omitempty"`
 	CurrentTurnStartedAt time.Time `json:"current_turn_started_at,omitempty"`
 
-	InitialFEN          string `json:"initial_fen"`
-	FEN                 string `json:"fen"`
-	LastMove            string `json:"last_move"`
-	WinnerID            string `json:"winner_id,omitempty"`
-	FinishedReason      string `json:"finished_reason,omitempty"`
-	RootPositionHash    string `json:"root_position_hash"`
-	CurrentPositionHash string `json:"current_position_hash"`
-	VariantPly          int    `json:"variant_ply"`
+	InitialFEN          string       `json:"initial_fen"`
+	FEN                 string       `json:"fen"`
+	LastMove            string       `json:"last_move"`
+	LastMoveEffects     []MoveEffect `json:"last_move_effects,omitempty"`
+	WinnerID            string       `json:"winner_id,omitempty"`
+	FinishedReason      string       `json:"finished_reason,omitempty"`
+	RootPositionHash    string       `json:"root_position_hash"`
+	CurrentPositionHash string       `json:"current_position_hash"`
+	VariantPly          int          `json:"variant_ply"`
 	InviteExpiresAt     time.Time
 	BotGame             bool   `json:"bot_game,omitempty"`
 	BotDifficulty       string `json:"bot_difficulty,omitempty"`
@@ -214,8 +216,7 @@ func (s *Session) Snapshot() State {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	moves := make([]Move, len(s.Moves))
-	copy(moves, s.Moves)
+	moves := cloneMoves(s.Moves)
 
 	return State{
 		GameID:                 s.GameID,
@@ -239,6 +240,7 @@ func (s *Session) Snapshot() State {
 		InitialFEN:             s.InitialFEN,
 		FEN:                    s.FEN,
 		LastMove:               s.LastMove,
+		LastMoveEffects:        cloneEffects(lastMoveEffects(s.Moves)),
 		WinnerID:               s.WinnerID,
 		FinishedReason:         s.FinishedReason,
 		RootPositionHash:       s.RootPositionHash,
@@ -300,6 +302,7 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 		IsCapture:   result.IsCapture,
 		IsCheck:     result.IsCheck,
 		IsCheckmate: result.IsCheckmate,
+		Effects:     cloneEffects(result.Effects),
 	}
 
 	s.Moves = append(s.Moves, nextMove)
@@ -326,8 +329,7 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 		}
 	}
 
-	moves := make([]Move, len(s.Moves))
-	copy(moves, s.Moves)
+	moves := cloneMoves(s.Moves)
 
 	return State{
 		GameID:                 s.GameID,
@@ -351,6 +353,7 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 		InitialFEN:             s.InitialFEN,
 		FEN:                    s.FEN,
 		LastMove:               s.LastMove,
+		LastMoveEffects:        cloneEffects(result.Effects),
 		WinnerID:               s.WinnerID,
 		FinishedReason:         s.FinishedReason,
 		RootPositionHash:       s.RootPositionHash,
@@ -471,8 +474,7 @@ func (s *Session) AcceptDraw(userID string) (State, error) {
 }
 
 func (s *Session) snapshotLocked() State {
-	moves := make([]Move, len(s.Moves))
-	copy(moves, s.Moves)
+	moves := cloneMoves(s.Moves)
 
 	return State{
 		GameID:                 s.GameID,
@@ -496,6 +498,7 @@ func (s *Session) snapshotLocked() State {
 		InitialFEN:             s.InitialFEN,
 		FEN:                    s.FEN,
 		LastMove:               s.LastMove,
+		LastMoveEffects:        cloneEffects(lastMoveEffects(s.Moves)),
 		WinnerID:               s.WinnerID,
 		FinishedReason:         s.FinishedReason,
 		RootPositionHash:       s.RootPositionHash,
@@ -526,6 +529,26 @@ func (s *Session) legalMovesLocked() []string {
 	cloned := make([]string, len(moves))
 	copy(cloned, moves)
 	return cloned
+}
+
+func lastMoveEffects(moves []Move) []MoveEffect {
+	if len(moves) == 0 {
+		return nil
+	}
+	return moves[len(moves)-1].Effects
+}
+
+func cloneMoves(in []Move) []Move {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]Move, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].Effects = cloneEffects(in[i].Effects)
+	}
+	return out
 }
 
 func (s *Session) FinishDraw(reason string) State {

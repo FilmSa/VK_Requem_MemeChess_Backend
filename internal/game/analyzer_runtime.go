@@ -79,6 +79,7 @@ func applySingleMove(gs *position.GameState, rs rules.RuleSet, raw string) (Move
 		IsCapture:   !captured.IsZero(),
 		IsCheck:     rs.IsCheck(gs, gs.SideToMove),
 		IsCheckmate: analyzergame.IsCheckmate(gs, rs),
+		Effects:     nil,
 	}, nil
 }
 

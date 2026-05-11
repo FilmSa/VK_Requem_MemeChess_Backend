@@ -111,6 +111,44 @@ func TestHandleGameStickerRejectsClientOutsideRoom(t *testing.T) {
 	}
 }
 
+func TestBroadcastMoveOutcomeIncludesEvolutionEffects(t *testing.T) {
+	hub := NewHub()
+	client := &Client{hub: hub}
+
+	client.broadcastMoveOutcome("game-1", "player-1", game.State{}, game.MoveResult{
+		Move: "a1a4",
+		Effects: []game.MoveEffect{
+			{
+				Type:  game.EffectTypeRookRampage,
+				Title: "Rook rampage",
+			},
+		},
+	})
+
+	broadcastRaw := <-hub.broadcast
+	var broadcast OutgoingMessage
+	if err := json.Unmarshal(broadcastRaw.Payload, &broadcast); err != nil {
+		t.Fatalf("unmarshal broadcast: %v", err)
+	}
+
+	if broadcast.Type != "game.event.evolution" {
+		t.Fatalf("expected evolution event, got %s", broadcast.Type)
+	}
+
+	payload, ok := broadcast.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("expected payload object, got %T", broadcast.Payload)
+	}
+	if got := payload["move"]; got != "a1a4" {
+		t.Fatalf("expected move a1a4, got %#v", got)
+	}
+
+	effects, ok := payload["effects"].([]any)
+	if !ok || len(effects) != 1 {
+		t.Fatalf("expected 1 effect in payload, got %#v", payload["effects"])
+	}
+}
+
 func mustRawMessage(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 

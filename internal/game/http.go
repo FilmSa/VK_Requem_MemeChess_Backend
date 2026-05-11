@@ -36,14 +36,14 @@ func writeAuthError(w http.ResponseWriter, err error) {
 }
 
 type inviteCreateResponse struct {
-	GameID        string    `json:"game_id"`
-	GameMode      string    `json:"game_mode"`
-	TimeControlID string    `json:"time_control_id,omitempty"`
-	InviteToken   string    `json:"invite_token"`
-	InviteURL     string    `json:"invite_url"`
-	JoinURL       string    `json:"join_url"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	Status        string    `json:"status"`
+	GameID   string `json:"game_id"`
+	GameMode string `json:"game_mode"`
+	timeControlPayload
+	InviteToken string    `json:"invite_token"`
+	InviteURL   string    `json:"invite_url"`
+	JoinURL     string    `json:"join_url"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Status      string    `json:"status"`
 }
 
 type inviteCreateRequest struct {
@@ -59,14 +59,14 @@ type inviteParticipant struct {
 }
 
 type inviteJoinResponse struct {
-	GameID        string            `json:"game_id"`
-	InviteToken   string            `json:"invite_token"`
-	PlayURL       string            `json:"play_url"`
-	GameMode      string            `json:"game_mode"`
-	TimeControlID string            `json:"time_control_id,omitempty"`
-	SessionToken  string            `json:"session_token"`
-	Player        inviteParticipant `json:"player"`
-	Status        string            `json:"status"`
+	GameID string `json:"game_id"`
+	timeControlPayload
+	InviteToken  string            `json:"invite_token"`
+	PlayURL      string            `json:"play_url"`
+	GameMode     string            `json:"game_mode"`
+	SessionToken string            `json:"session_token"`
+	Player       inviteParticipant `json:"player"`
+	Status       string            `json:"status"`
 }
 
 type participantsResponse struct {
@@ -288,14 +288,14 @@ func (h *HTTP) PostInvite(w http.ResponseWriter, r *http.Request) {
 
 	inviteURL := h.JoinBase + "/invite/" + gameID
 	writeJSON(w, http.StatusCreated, inviteCreateResponse{
-		GameID:        gameID,
-		GameMode:      mode,
-		TimeControlID: timeControlID,
-		InviteToken:   gameID,
-		InviteURL:     inviteURL,
-		JoinURL:       inviteURL,
-		ExpiresAt:     expiresAt,
-		Status:        string(StatusWaiting),
+		GameID:             gameID,
+		GameMode:           mode,
+		timeControlPayload: buildTimeControlPayloadFromPreset(timeControlID),
+		InviteToken:        gameID,
+		InviteURL:          inviteURL,
+		JoinURL:            inviteURL,
+		ExpiresAt:          expiresAt,
+		Status:             string(StatusWaiting),
 	})
 }
 
@@ -379,14 +379,22 @@ func (h *HTTP) PostInviteJoin(w http.ResponseWriter, r *http.Request, inviteToke
 	}
 
 	writeJSON(w, http.StatusOK, inviteJoinResponse{
-		GameID:        state.GameID,
-		InviteToken:   inviteToken,
-		PlayURL:       h.JoinBase + "/play?game=" + state.GameID,
-		GameMode:      state.GameMode,
-		TimeControlID: state.TimeControlID,
-		SessionToken:  sessionToken,
-		Player:        buildInviteParticipant(participant),
-		Status:        state.Status,
+		GameID: state.GameID,
+		timeControlPayload: buildTimeControlPayload(
+			state.TimeControlID,
+			state.TimeControlLabel,
+			state.TimeControlBaseMs,
+			state.TimeControlIncrementMs,
+			state.Player1RemainingMs,
+			state.Player2RemainingMs,
+			state.CurrentTurnStartedAt,
+		),
+		InviteToken:  inviteToken,
+		PlayURL:      h.JoinBase + "/play?game=" + state.GameID,
+		GameMode:     state.GameMode,
+		SessionToken: sessionToken,
+		Player:       buildInviteParticipant(participant),
+		Status:       state.Status,
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"meme_chess/internal/auth"
 	"meme_chess/internal/user"
@@ -29,18 +30,28 @@ func (h *HTTP) GetCatalog(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if h.Svc == nil || h.Auth == nil {
+	if h.Svc == nil {
 		writeError(w, http.StatusInternalServerError, "shop service unavailable")
 		return
 	}
 
-	u, err := h.Auth.UserFromBearer(r.Context(), r.Header.Get("Authorization"))
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, err.Error())
-		return
+	userID := ""
+	authHeader := r.Header.Get("Authorization")
+	if strings.TrimSpace(authHeader) != "" {
+		if h.Auth == nil {
+			writeError(w, http.StatusInternalServerError, "shop auth unavailable")
+			return
+		}
+
+		u, err := h.Auth.UserFromBearer(r.Context(), authHeader)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		userID = u.ID
 	}
 
-	items, err := h.Svc.GetCatalog(r.Context(), u.ID)
+	items, err := h.Svc.GetCatalog(r.Context(), userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load shop catalog")
 		return
@@ -144,4 +155,3 @@ func RegisterRoutes(mux *http.ServeMux, h *HTTP) {
 	mux.HandleFunc("/api/v1/shop/convert", h.PostConvert)
 	mux.HandleFunc("/api/v1/shop/buy", h.PostBuy)
 }
-

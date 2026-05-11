@@ -40,5 +40,6 @@ func (e *MockEngine) ApplyMove(move string) (MoveResult, error) {
 		IsCapture:   isCapture,
 		IsCheck:     isCheck,
 		IsCheckmate: isCheckmate,
+		Effects:     nil,
 	}, nil
 }

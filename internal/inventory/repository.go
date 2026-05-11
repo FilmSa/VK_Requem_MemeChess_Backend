@@ -26,7 +26,9 @@ func (r *Repository) GetCatalog(ctx context.Context) ([]Item, error) {
 	defer cancel()
 
 	const q = `
-		SELECT slug, type, title, asset_url, meta, created_at
+		SELECT slug,
+		       CASE WHEN type = 'sticker' THEN 'emote' ELSE type END AS type,
+		       title, asset_url, meta, created_at
 		FROM inventory_items
 		ORDER BY type, slug
 	`
@@ -57,7 +59,9 @@ func (r *Repository) GetOwned(ctx context.Context, userID string) ([]Item, error
 	defer cancel()
 
 	const q = `
-		SELECT i.slug, i.type, i.title, i.asset_url, i.meta, i.created_at
+		SELECT i.slug,
+		       CASE WHEN i.type = 'sticker' THEN 'emote' ELSE i.type END AS type,
+		       i.title, i.asset_url, i.meta, i.created_at
 		FROM user_inventory_items ui
 		JOIN inventory_items i ON i.slug = ui.item_slug
 		WHERE ui.user_id = $1
@@ -90,8 +94,14 @@ func (r *Repository) EnsureSelectionRow(ctx context.Context, userID string) erro
 	defer cancel()
 
 	const q = `
-		INSERT INTO user_inventory_selection (user_id, piece_skin_slug, board_skin_slug, sticker_slugs)
-		VALUES ($1, NULL, NULL, '{}'::text[])
+		INSERT INTO user_inventory_selection (
+			user_id,
+			piece_skin_slug,
+			board_skin_slug,
+			emote_slugs,
+			sticker_slugs
+		)
+		VALUES ($1, NULL, NULL, '{}'::text[], '{}'::text[])
 		ON CONFLICT (user_id) DO NOTHING
 	`
 	_, err := r.pool.Exec(ctx, q, userID)
@@ -110,21 +120,23 @@ func (r *Repository) GetSelection(ctx context.Context, userID string) (Selection
 	defer cancel()
 
 	const q = `
-		SELECT piece_skin_slug, board_skin_slug, sticker_slugs
+		SELECT piece_skin_slug,
+		       board_skin_slug,
+		       COALESCE(emote_slugs, sticker_slugs, '{}'::text[])
 		FROM user_inventory_selection
 		WHERE user_id = $1
 	`
 
 	var sel Selection
-	err := r.pool.QueryRow(ctx, q, userID).Scan(&sel.PieceSkinSlug, &sel.BoardSkinSlug, &sel.StickerSlugs)
+	err := r.pool.QueryRow(ctx, q, userID).Scan(&sel.PieceSkinSlug, &sel.BoardSkinSlug, &sel.EmoteSlugs)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Selection{}, ErrNotFound
 		}
 		return Selection{}, fmt.Errorf("select selection: %w", err)
 	}
-	if sel.StickerSlugs == nil {
-		sel.StickerSlugs = []string{}
+	if sel.EmoteSlugs == nil {
+		sel.EmoteSlugs = []string{}
 	}
 	return sel, nil
 }
@@ -141,20 +153,21 @@ func (r *Repository) SetSelection(ctx context.Context, userID string, sel Select
 		UPDATE user_inventory_selection
 		SET piece_skin_slug = $2,
 		    board_skin_slug = $3,
+		    emote_slugs = $4,
 		    sticker_slugs = $4,
 		    updated_at = now()
 		WHERE user_id = $1
-		RETURNING piece_skin_slug, board_skin_slug, sticker_slugs
+		RETURNING piece_skin_slug, board_skin_slug, COALESCE(emote_slugs, sticker_slugs, '{}'::text[])
 	`
 
 	var out Selection
-	err := r.pool.QueryRow(ctx, q, userID, sel.PieceSkinSlug, sel.BoardSkinSlug, sel.StickerSlugs).
-		Scan(&out.PieceSkinSlug, &out.BoardSkinSlug, &out.StickerSlugs)
+	err := r.pool.QueryRow(ctx, q, userID, sel.PieceSkinSlug, sel.BoardSkinSlug, sel.EmoteSlugs).
+		Scan(&out.PieceSkinSlug, &out.BoardSkinSlug, &out.EmoteSlugs)
 	if err != nil {
 		return Selection{}, fmt.Errorf("update selection: %w", err)
 	}
-	if out.StickerSlugs == nil {
-		out.StickerSlugs = []string{}
+	if out.EmoteSlugs == nil {
+		out.EmoteSlugs = []string{}
 	}
 	return out, nil
 }
@@ -164,7 +177,9 @@ func (r *Repository) GetItem(ctx context.Context, slug string) (*Item, error) {
 	defer cancel()
 
 	const q = `
-		SELECT slug, type, title, asset_url, meta, created_at
+		SELECT slug,
+		       CASE WHEN type = 'sticker' THEN 'emote' ELSE type END AS type,
+		       title, asset_url, meta, created_at
 		FROM inventory_items
 		WHERE slug = $1
 	`
@@ -204,15 +219,15 @@ func (r *Repository) UserOwns(ctx context.Context, userID string, slug string) (
 	return true, nil
 }
 
-func (r *Repository) HasSelectedStickerAssetURL(ctx context.Context, userID string, assetURL string) (bool, error) {
+func (r *Repository) HasSelectedEmoteAssetURL(ctx context.Context, userID string, assetURL string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	const q = `
 		SELECT 1
 		FROM user_inventory_selection sel
-		JOIN unnest(sel.sticker_slugs) es(slug) ON true
-		JOIN inventory_items i ON i.slug = es.slug AND i.type = 'sticker'
+		JOIN unnest(COALESCE(sel.emote_slugs, sel.sticker_slugs, '{}'::text[])) es(slug) ON true
+		JOIN inventory_items i ON i.slug = es.slug AND (i.type = 'emote' OR i.type = 'sticker')
 		JOIN user_inventory_items ui ON ui.user_id = sel.user_id AND ui.item_slug = i.slug
 		WHERE sel.user_id = $1
 		  AND i.asset_url = $2
@@ -225,7 +240,7 @@ func (r *Repository) HasSelectedStickerAssetURL(ctx context.Context, userID stri
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
 		}
-		return false, fmt.Errorf("check selected sticker asset_url: %w", err)
+		return false, fmt.Errorf("check selected emote asset_url: %w", err)
 	}
 	return true, nil
 }

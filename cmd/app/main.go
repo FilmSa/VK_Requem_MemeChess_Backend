@@ -8,6 +8,7 @@ import (
 
 	"meme_chess/internal/analyzer"
 	"meme_chess/internal/auth"
+	"meme_chess/internal/bootstrap"
 	"meme_chess/internal/config"
 	"meme_chess/internal/db"
 	"meme_chess/internal/game"
@@ -27,7 +28,7 @@ func withCORS(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == http.MethodOptions {
@@ -69,6 +70,14 @@ func main() {
 		log.Fatalf("failed to connect postgres: %v", err)
 	}
 	defer pg.Pool.Close()
+
+	if err := db.RunMigrations(pg.Pool, "migrations"); err != nil {
+		log.Fatalf("failed to apply migrations: %v", err)
+	}
+
+	if err := bootstrap.SyncStoreCatalog(pg.Pool); err != nil {
+		log.Fatalf("failed to sync store catalog: %v", err)
+	}
 
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret)
 	userRepo := user.NewRepository(pg.Pool)
@@ -160,6 +169,7 @@ func main() {
 		gameHTTP.PostInviteJoin(w, r, parts[0])
 	})
 
+	http.Handle("/emoji/", http.StripPrefix("/emoji/", http.FileServer(http.Dir("emoji"))))
 	http.HandleFunc("/games/", func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/games/")
 		rest = strings.TrimSuffix(rest, "/")

@@ -16,6 +16,8 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates
 
 COPY --from=builder /out/meme-chess /app/meme-chess
+COPY migrations /app/migrations
+COPY emoji /app/emoji
 
 EXPOSE 8080
 

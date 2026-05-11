@@ -172,12 +172,8 @@ func (c *Client) handleGameResign(msg IncomingMessage) {
 	})
 
 	c.broadcastJSON(payload.GameID, OutgoingMessage{
-		Type: "game.finished",
-		Payload: map[string]string{
-			"game_id":         payload.GameID,
-			"winner_id":       state.WinnerID,
-			"finished_reason": state.FinishedReason,
-		},
+		Type:    "game.finished",
+		Payload: buildFinishedPayload(payload.GameID, state),
 	})
 }
 
@@ -306,12 +302,8 @@ func (c *Client) handleGameDrawAccept(msg IncomingMessage) {
 	})
 
 	c.broadcastJSON(payload.GameID, OutgoingMessage{
-		Type: "game.finished",
-		Payload: map[string]string{
-			"game_id":         payload.GameID,
-			"winner_id":       state.WinnerID,
-			"finished_reason": state.FinishedReason,
-		},
+		Type:    "game.finished",
+		Payload: buildFinishedPayload(payload.GameID, state),
 	})
 }
 
@@ -371,12 +363,8 @@ func (c *Client) handleGameMove(msg IncomingMessage) {
 				Payload: state,
 			})
 			c.broadcastJSON(payload.GameID, OutgoingMessage{
-				Type: "game.finished",
-				Payload: map[string]string{
-					"game_id":         payload.GameID,
-					"winner_id":       state.WinnerID,
-					"finished_reason": state.FinishedReason,
-				},
+				Type:    "game.finished",
+				Payload: buildFinishedPayload(payload.GameID, state),
 			})
 		}
 		c.sendGameError(msg.RequestID, err)
@@ -419,12 +407,8 @@ func (c *Client) handleGameMove(msg IncomingMessage) {
 			Payload: botState,
 		})
 		c.broadcastJSON(payload.GameID, OutgoingMessage{
-			Type: "game.finished",
-			Payload: map[string]string{
-				"game_id":         payload.GameID,
-				"winner_id":       botState.WinnerID,
-				"finished_reason": botState.FinishedReason,
-			},
+			Type:    "game.finished",
+			Payload: buildFinishedPayload(payload.GameID, botState),
 		})
 	}
 }
@@ -568,6 +552,18 @@ func (c *Client) broadcastGameState(gameID string) {
 }
 
 func (c *Client) broadcastMoveOutcome(gameID string, actorUserID string, state game.State, result game.MoveResult) {
+	if len(result.Effects) > 0 {
+		c.broadcastJSON(gameID, OutgoingMessage{
+			Type: "game.event.evolution",
+			Payload: map[string]any{
+				"game_id":    gameID,
+				"by_user_id": actorUserID,
+				"move":       result.Move,
+				"effects":    result.Effects,
+			},
+		})
+	}
+
 	if result.IsCapture {
 		c.broadcastJSON(gameID, OutgoingMessage{
 			Type: "game.event.capture",
@@ -601,12 +597,8 @@ func (c *Client) broadcastMoveOutcome(gameID string, actorUserID string, state g
 		})
 
 		c.broadcastJSON(gameID, OutgoingMessage{
-			Type: "game.finished",
-			Payload: map[string]string{
-				"game_id":         gameID,
-				"winner_id":       state.WinnerID,
-				"finished_reason": state.FinishedReason,
-			},
+			Type:    "game.finished",
+			Payload: buildFinishedPayload(gameID, state),
 		})
 	}
 }

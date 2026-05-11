@@ -321,11 +321,47 @@ func TestEvolutionRookRampageClearsPiecesOnPath(t *testing.T) {
 	if piece := runtime.state.PieceAt(position.MustSquare(0, 3)); piece.Type != position.Rook || piece.Color != position.White {
 		t.Fatalf("expected rook on a4, got %+v", piece)
 	}
-	if piece := runtime.state.PieceAt(position.MustSquare(0, 1)); !piece.IsZero() {
-		t.Fatalf("expected friendly pawn on a2 to be removed, got %+v", piece)
+	if piece := runtime.state.PieceAt(position.MustSquare(0, 1)); piece.Type != position.Pawn || piece.Color != position.White {
+		t.Fatalf("expected friendly pawn on a2 to survive, got %+v", piece)
 	}
 	if piece := runtime.state.PieceAt(position.MustSquare(0, 2)); !piece.IsZero() {
 		t.Fatalf("expected enemy pawn on a3 to be removed, got %+v", piece)
+	}
+	if len(result.Effects) != 1 {
+		t.Fatalf("expected 1 rook effect, got %d", len(result.Effects))
+	}
+	if result.Effects[0].Type != EffectTypeRookRampage {
+		t.Fatalf("expected rook rampage effect, got %+v", result.Effects[0])
+	}
+	if len(result.Effects[0].Removed) != 1 || result.Effects[0].Removed[0].Square != "a3" {
+		t.Fatalf("expected only a3 to be listed as removed, got %+v", result.Effects[0].Removed)
+	}
+}
+
+func TestEvolutionRookRampageChecksThroughBlockingPieces(t *testing.T) {
+	runtime := &evolutionRuntime{
+		state: emptyState(position.White),
+		turns: 20,
+		rng:   &stubRandomizer{},
+	}
+	runtime.state.SetPiece(position.MustSquare(6, 0), position.Piece{Type: position.King, Color: position.White})
+	runtime.state.SetPiece(position.MustSquare(0, 7), position.Piece{Type: position.King, Color: position.Black})
+	runtime.state.SetPiece(position.MustSquare(0, 0), position.Piece{Type: position.Rook, Color: position.White})
+	runtime.state.SetPiece(position.MustSquare(0, 4), position.Piece{Type: position.Pawn, Color: position.White})
+	runtime.state.SetPiece(position.MustSquare(0, 5), position.Piece{Type: position.Pawn, Color: position.Black})
+
+	result, err := runtime.ApplyMove("a1a4")
+	if err != nil {
+		t.Fatalf("apply move: %v", err)
+	}
+	if !result.IsCheck {
+		t.Fatal("expected evolved rook to give check through blocking pieces")
+	}
+	if piece := runtime.state.PieceAt(position.MustSquare(0, 4)); piece.Type != position.Pawn || piece.Color != position.White {
+		t.Fatalf("expected friendly blocker on a5 to remain, got %+v", piece)
+	}
+	if piece := runtime.state.PieceAt(position.MustSquare(0, 5)); piece.Type != position.Pawn || piece.Color != position.Black {
+		t.Fatalf("expected enemy blocker on a6 to remain after the move, got %+v", piece)
 	}
 }
 

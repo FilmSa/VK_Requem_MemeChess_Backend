@@ -22,8 +22,8 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 var (
-	ErrItemNotForSale          = errors.New("item is not for sale")
-	ErrItemAlreadyOwned        = errors.New("item already owned")
+	ErrItemNotForSale           = errors.New("item is not for sale")
+	ErrItemAlreadyOwned         = errors.New("item already owned")
 	ErrInsufficientShopCurrency = errors.New("insufficient shop currency")
 )
 
@@ -33,14 +33,17 @@ func (r *Repository) GetCatalog(ctx context.Context, userID string) ([]CatalogIt
 
 	const q = `
 		SELECT
-			i.slug, i.type, i.title, i.asset_url, i.meta, i.created_at,
+			i.slug,
+			CASE WHEN i.type = 'sticker' THEN 'emote' ELSE i.type END AS type,
+			i.title, i.asset_url, i.meta, i.created_at,
 			si.price_shop_currency, si.is_active,
 			(ui.user_id IS NOT NULL) AS owned
 		FROM shop_items si
 		JOIN inventory_items i ON i.slug = si.item_slug
 		LEFT JOIN user_inventory_items ui
-		       ON ui.user_id = $1
+		       ON ui.user_id = NULLIF($1, '')::uuid
 		      AND ui.item_slug = i.slug
+		WHERE si.is_active = true
 		ORDER BY i.type, i.slug
 	`
 
@@ -90,7 +93,9 @@ func (r *Repository) Buy(ctx context.Context, userID string, itemSlug string) (n
 	var price int64
 	var isActive bool
 	const qItem = `
-		SELECT i.slug, i.type, i.title, i.asset_url, i.meta, i.created_at,
+		SELECT i.slug,
+		       CASE WHEN i.type = 'sticker' THEN 'emote' ELSE i.type END AS type,
+		       i.title, i.asset_url, i.meta, i.created_at,
 		       si.price_shop_currency, si.is_active
 		FROM shop_items si
 		JOIN inventory_items i ON i.slug = si.item_slug
@@ -114,7 +119,7 @@ func (r *Repository) Buy(ctx context.Context, userID string, itemSlug string) (n
 		return 0, 0, nil, ErrItemNotForSale
 	}
 	switch it.Type {
-	case inventory.ItemTypeSticker, inventory.ItemTypeBoardSkin, inventory.ItemTypePieceSkin:
+	case inventory.ItemTypeEmote, inventory.ItemTypeBoardSkin, inventory.ItemTypePieceSkin:
 	default:
 		return 0, 0, nil, ErrItemNotForSale
 	}
@@ -163,4 +168,3 @@ func (r *Repository) Buy(ctx context.Context, userID string, itemSlug string) (n
 
 	return newShop, newGame, &it, nil
 }
-

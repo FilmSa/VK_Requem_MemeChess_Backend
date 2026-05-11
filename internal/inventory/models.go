@@ -7,7 +7,7 @@ type ItemType string
 const (
 	ItemTypePieceSkin ItemType = "piece_skin"
 	ItemTypeBoardSkin ItemType = "board_skin"
-	ItemTypeSticker   ItemType = "sticker"
+	ItemTypeEmote     ItemType = "emote"
 )
 
 type Item struct {
@@ -22,7 +22,7 @@ type Item struct {
 type Selection struct {
 	PieceSkinSlug *string  `json:"piece_skin_slug,omitempty"`
 	BoardSkinSlug *string  `json:"board_skin_slug,omitempty"`
-	StickerSlugs  []string `json:"sticker_slugs"`
+	EmoteSlugs    []string `json:"emote_slugs"`
 }
 
 type Inventory struct {

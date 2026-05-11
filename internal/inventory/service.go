@@ -8,12 +8,18 @@ import (
 )
 
 var (
-	ErrTooManyStickers    = errors.New("too many stickers selected (max 3)")
-	ErrDuplicateStickers  = errors.New("duplicate stickers are not allowed")
-	ErrItemNotOwned       = errors.New("item is not owned")
-	ErrItemNotFound       = errors.New("item not found")
-	ErrInvalidItemType    = errors.New("invalid item type")
-	ErrStickerNotSelected = errors.New("sticker is not selected")
+	ErrTooManyEmotes    = errors.New("too many emotes selected (max 3)")
+	ErrDuplicateEmotes  = errors.New("duplicate emotes are not allowed")
+	ErrItemNotOwned     = errors.New("item is not owned")
+	ErrItemNotFound     = errors.New("item not found")
+	ErrInvalidItemType  = errors.New("invalid item type")
+	ErrEmoteNotSelected = errors.New("emote is not selected")
+)
+
+var (
+	ErrTooManyStickers    = ErrTooManyEmotes
+	ErrDuplicateStickers  = ErrDuplicateEmotes
+	ErrStickerNotSelected = ErrEmoteNotSelected
 )
 
 type Service struct {
@@ -54,9 +60,9 @@ func (s *Service) SetSelection(ctx context.Context, userID string, sel Selection
 	return s.repo.SetSelection(ctx, userID, normalized)
 }
 
-func (s *Service) ResolveSelectedStickerAssetURL(ctx context.Context, userID string, stickerSlug string) (string, error) {
-	stickerSlug = strings.TrimSpace(stickerSlug)
-	if stickerSlug == "" {
+func (s *Service) ResolveSelectedEmoteAssetURL(ctx context.Context, userID string, emoteSlug string) (string, error) {
+	emoteSlug = strings.TrimSpace(emoteSlug)
+	if emoteSlug == "" {
 		return "", ErrItemNotFound
 	}
 
@@ -64,11 +70,11 @@ func (s *Service) ResolveSelectedStickerAssetURL(ctx context.Context, userID str
 	if err != nil {
 		return "", err
 	}
-	if !contains(sel.StickerSlugs, stickerSlug) {
-		return "", ErrStickerNotSelected
+	if !contains(sel.EmoteSlugs, emoteSlug) {
+		return "", ErrEmoteNotSelected
 	}
 
-	ok, err := s.repo.UserOwns(ctx, userID, stickerSlug)
+	ok, err := s.repo.UserOwns(ctx, userID, emoteSlug)
 	if err != nil {
 		return "", err
 	}
@@ -76,28 +82,36 @@ func (s *Service) ResolveSelectedStickerAssetURL(ctx context.Context, userID str
 		return "", ErrItemNotOwned
 	}
 
-	it, err := s.repo.GetItem(ctx, stickerSlug)
+	it, err := s.repo.GetItem(ctx, emoteSlug)
 	if err != nil {
 		return "", err
 	}
 	if it == nil {
 		return "", ErrItemNotFound
 	}
-	if it.Type != ItemTypeSticker {
+	if it.Type != ItemTypeEmote {
 		return "", ErrInvalidItemType
 	}
 	if it.AssetURL == nil || strings.TrimSpace(*it.AssetURL) == "" {
-		return "", fmt.Errorf("sticker has no asset_url")
+		return "", fmt.Errorf("emote has no asset_url")
 	}
 	return strings.TrimSpace(*it.AssetURL), nil
 }
 
-func (s *Service) CanSendSelectedStickerAssetURL(ctx context.Context, userID string, assetURL string) (bool, error) {
+func (s *Service) ResolveSelectedStickerAssetURL(ctx context.Context, userID string, stickerSlug string) (string, error) {
+	return s.ResolveSelectedEmoteAssetURL(ctx, userID, stickerSlug)
+}
+
+func (s *Service) CanSendSelectedEmoteAssetURL(ctx context.Context, userID string, assetURL string) (bool, error) {
 	assetURL = strings.TrimSpace(assetURL)
 	if assetURL == "" {
 		return false, nil
 	}
-	return s.repo.HasSelectedStickerAssetURL(ctx, userID, assetURL)
+	return s.repo.HasSelectedEmoteAssetURL(ctx, userID, assetURL)
+}
+
+func (s *Service) CanSendSelectedStickerAssetURL(ctx context.Context, userID string, assetURL string) (bool, error) {
+	return s.CanSendSelectedEmoteAssetURL(ctx, userID, assetURL)
 }
 
 func (s *Service) normalizeSelection(sel Selection) (Selection, error) {
@@ -125,20 +139,20 @@ func (s *Service) normalizeSelection(sel Selection) (Selection, error) {
 	}
 
 	seen := make(map[string]struct{})
-	for _, raw := range sel.StickerSlugs {
+	for _, raw := range sel.EmoteSlugs {
 		v := strings.TrimSpace(raw)
 		if v == "" {
 			continue
 		}
 		if _, ok := seen[v]; ok {
-			return Selection{}, ErrDuplicateStickers
+			return Selection{}, ErrDuplicateEmotes
 		}
 		seen[v] = struct{}{}
-		out.StickerSlugs = append(out.StickerSlugs, v)
+		out.EmoteSlugs = append(out.EmoteSlugs, v)
 	}
 
-	if len(out.StickerSlugs) > 3 {
-		return Selection{}, ErrTooManyStickers
+	if len(out.EmoteSlugs) > 3 {
+		return Selection{}, ErrTooManyEmotes
 	}
 	return out, nil
 }
@@ -154,9 +168,9 @@ func (s *Service) validateSelectionOwnedAndTyped(ctx context.Context, userID str
 			return fmt.Errorf("board_skin_slug: %w", err)
 		}
 	}
-	for _, slug := range sel.StickerSlugs {
-		if err := s.validateItem(ctx, userID, slug, ItemTypeSticker); err != nil {
-			return fmt.Errorf("sticker_slugs: %w", err)
+	for _, slug := range sel.EmoteSlugs {
+		if err := s.validateItem(ctx, userID, slug, ItemTypeEmote); err != nil {
+			return fmt.Errorf("emote_slugs: %w", err)
 		}
 	}
 	return nil

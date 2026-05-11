@@ -26,6 +26,7 @@ type atomicOutcome struct {
 	move       position.Move
 	movedPiece position.Piece
 	captured   bool
+	effects    []MoveEffect
 }
 
 func newEvolutionRuntime(rng randomizer) engineRuntime {
@@ -62,12 +63,14 @@ func (e *evolutionRuntime) ApplyMove(raw string) (MoveResult, error) {
 	work := e.state.Clone()
 
 	captured := false
+	effects := make([]MoveEffect, 0, 4)
 	if len(parts) == 1 {
 		outcome, err := e.applyAtomic(work, parts[0], abilitiesBefore, false)
 		if err != nil {
 			return MoveResult{}, ErrInvalidMove
 		}
 		captured = outcome.captured
+		effects = append(effects, outcome.effects...)
 	} else {
 		if !abilitiesBefore.doubleKnight {
 			return MoveResult{}, ErrInvalidMove
@@ -95,6 +98,22 @@ func (e *evolutionRuntime) ApplyMove(raw string) (MoveResult, error) {
 			return MoveResult{}, ErrInvalidMove
 		}
 		captured = first.captured || second.captured
+		effects = append(effects, first.effects...)
+		effects = append(effects, second.effects...)
+		effects = append(effects, MoveEffect{
+			Type:    EffectTypeKnightDouble,
+			Title:   "Knight moved twice",
+			Message: "The evolved knight chained two jumps in one turn.",
+			Piece:   pieceTypeName(first.movedPiece.Type),
+			Color:   colorName(first.movedPiece.Color),
+			From:    first.move.From.String(),
+			To:      second.move.To.String(),
+			Animation: &AnimationHint{
+				Name:       "knight-double-jump",
+				DurationMs: 420,
+				Easing:     "ease-in-out",
+			},
+		})
 	}
 
 	e.state = work
@@ -109,8 +128,25 @@ func (e *evolutionRuntime) ApplyMove(raw string) (MoveResult, error) {
 	if abilitiesAfter.kingRevenge && isCheckmate && !e.kingRevengeUsed[defendingSide] {
 		checkers := evolutionCheckingPieces(e.state, e.state.SideToMove, ruleSet)
 		if len(checkers) == 1 {
+			checkingPiece := e.state.PieceAt(checkers[0])
 			e.removePieceWithCastlingImpact(e.state, checkers[0])
 			e.kingRevengeUsed[defendingSide] = true
+			effects = append(effects, MoveEffect{
+				Type:    EffectTypeKingRevenge,
+				Title:   "King revenge",
+				Message: "The mating piece was erased because the checkmate was delivered by a single attacker.",
+				Piece:   pieceTypeName(position.King),
+				Color:   colorName(defendingSide),
+				To:      checkers[0].String(),
+				Removed: []AffectedPiece{
+					affectedPiece(checkers[0], checkingPiece, "enemy", 0, -24),
+				},
+				Animation: &AnimationHint{
+					Name:       "king-revenge-burst",
+					DurationMs: 360,
+					Easing:     "ease-out",
+				},
+			})
 			isCheck = ruleSet.IsCheck(e.state, e.state.SideToMove)
 			isCheckmate = isCheck && !e.hasLegalTurn(e.state, abilitiesAfter)
 		}
@@ -122,6 +158,7 @@ func (e *evolutionRuntime) ApplyMove(raw string) (MoveResult, error) {
 		IsCapture:   captured,
 		IsCheck:     isCheck,
 		IsCheckmate: isCheckmate,
+		Effects:     cloneEffects(effects),
 	}, nil
 }
 
@@ -183,14 +220,33 @@ func (e *evolutionRuntime) applyAtomic(gs *position.GameState, raw string, abili
 
 func (e *evolutionRuntime) executeAtomic(gs *position.GameState, mv position.Move, piece position.Piece, abilities evolutionAbilities) (atomicOutcome, error) {
 	if abilities.rookRampage && piece.Type == position.Rook {
-		captured, err := e.executeRookRampageMove(gs, mv)
+		captured, effects, err := e.executeRookRampageMove(gs, mv)
 		if err != nil {
 			return atomicOutcome{}, err
 		}
-		return atomicOutcome{move: mv, movedPiece: piece, captured: captured}, nil
+		return atomicOutcome{move: mv, movedPiece: piece, captured: captured, effects: effects}, nil
 	}
 
 	capturedPiece := capturedPieceForMove(gs, mv)
+	effects := make([]MoveEffect, 0, 1)
+	if abilities.bishopPierce && piece.Type == position.Bishop {
+		if skipped := piercedPawnSquares(gs, mv.From, mv.To); len(skipped) > 0 {
+			effects = append(effects, MoveEffect{
+				Type:    EffectTypeBishopPierce,
+				Title:   "Bishop pierced pawns",
+				Message: "The evolved bishop attacked through pawns on its diagonal.",
+				Piece:   pieceTypeName(piece.Type),
+				Color:   colorName(piece.Color),
+				From:    mv.From.String(),
+				To:      mv.To.String(),
+				Animation: &AnimationHint{
+					Name:       "bishop-pierce",
+					DurationMs: 320,
+					Easing:     "ease-out",
+				},
+			})
+		}
+	}
 	if err := gs.ApplyMove(mv); err != nil {
 		return atomicOutcome{}, err
 	}
@@ -202,17 +258,41 @@ func (e *evolutionRuntime) executeAtomic(gs *position.GameState, mv position.Mov
 			return atomicOutcome{}, err
 		}
 		if hit == 0 {
+			counteredPiece := gs.PieceAt(mv.To)
 			captured = e.removePieceWithCastlingImpact(gs, mv.To) || captured
+			effects = append(effects, MoveEffect{
+				Type:    EffectTypePawnCounter,
+				Title:   "Pawn counter",
+				Message: "The captured pawn struck back and removed the attacking pawn.",
+				Piece:   pieceTypeName(piece.Type),
+				Color:   colorName(piece.Color),
+				To:      mv.To.String(),
+				Removed: []AffectedPiece{
+					affectedPiece(mv.To, counteredPiece, "self", 0, -18),
+				},
+				Animation: &AnimationHint{
+					Name:       "pawn-counter",
+					DurationMs: 260,
+					Easing:     "ease-out",
+				},
+			})
 		}
 	}
 
-	return atomicOutcome{move: mv, movedPiece: piece, captured: captured}, nil
+	return atomicOutcome{move: mv, movedPiece: piece, captured: captured, effects: effects}, nil
 }
 
-func (e *evolutionRuntime) executeRookRampageMove(gs *position.GameState, mv position.Move) (bool, error) {
-	captured := !gs.PieceAt(mv.To).IsZero()
+func (e *evolutionRuntime) executeRookRampageMove(gs *position.GameState, mv position.Move) (bool, []MoveEffect, error) {
+	destinationPiece := gs.PieceAt(mv.To)
+	captured := !destinationPiece.IsZero()
 	if err := gs.ApplyMove(mv); err != nil {
-		return false, err
+		return false, nil, err
+	}
+
+	removed := make([]AffectedPiece, 0, 8)
+	if !destinationPiece.IsZero() {
+		kx, ky := rookKnockback(0, mv.From, mv.To)
+		removed = append(removed, affectedPiece(mv.To, destinationPiece, "enemy", kx, ky))
 	}
 
 	for _, sq := range lineSquaresExclusive(mv.From, mv.To) {
@@ -221,10 +301,15 @@ func (e *evolutionRuntime) executeRookRampageMove(gs *position.GameState, mv pos
 			continue
 		}
 		if piece.Type == position.King {
-			return false, ErrInvalidMove
+			return false, nil, ErrInvalidMove
+		}
+		if piece.Color == gs.PieceAt(mv.To).Color {
+			continue
 		}
 		if e.removePieceWithCastlingImpact(gs, sq) {
 			captured = true
+			kx, ky := rookKnockback(len(removed), mv.From, mv.To)
+			removed = append(removed, affectedPiece(sq, piece, "enemy", kx, ky))
 		}
 	}
 
@@ -232,7 +317,23 @@ func (e *evolutionRuntime) executeRookRampageMove(gs *position.GameState, mv pos
 		gs.HalfmoveClock = 0
 	}
 
-	return captured, nil
+	return captured, []MoveEffect{
+		{
+			Type:    EffectTypeRookRampage,
+			Title:   "Rook rampage",
+			Message: "The evolved rook plowed through every enemy piece on its line and can check through blockers.",
+			Piece:   pieceTypeName(position.Rook),
+			Color:   colorName(gs.PieceAt(mv.To).Color),
+			From:    mv.From.String(),
+			To:      mv.To.String(),
+			Removed: removed,
+			Animation: &AnimationHint{
+				Name:       "rook-rampage",
+				DurationMs: 560,
+				Easing:     "ease-in-out",
+			},
+		},
+	}, nil
 }
 
 func (e *evolutionRuntime) removePieceWithCastlingImpact(gs *position.GameState, sq position.Square) bool {
@@ -276,6 +377,20 @@ func lineSquaresExclusive(from, to position.Square) []position.Square {
 	out := make([]position.Square, 0, 7)
 	for file, rank := from.File()+df, from.Rank()+dr; file != to.File() || rank != to.Rank(); file, rank = file+df, rank+dr {
 		out = append(out, position.MustSquare(file, rank))
+	}
+	return out
+}
+
+func piercedPawnSquares(fromState *position.GameState, from, to position.Square) []position.Square {
+	df := sign(to.File() - from.File())
+	dr := sign(to.Rank() - from.Rank())
+
+	out := make([]position.Square, 0, 7)
+	for file, rank := from.File()+df, from.Rank()+dr; file != to.File() || rank != to.Rank(); file, rank = file+df, rank+dr {
+		sq := position.MustSquare(file, rank)
+		if fromState.PieceAt(sq).Type == position.Pawn {
+			out = append(out, sq)
+		}
 	}
 	return out
 }

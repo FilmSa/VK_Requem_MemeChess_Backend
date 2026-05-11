@@ -35,7 +35,7 @@ func (r *Repository) Create(ctx context.Context, username string, email *string,
 
 	const q = `
 		INSERT INTO users (id, username, email, password_hash, shop_currency, game_currency)
-		VALUES (gen_random_uuid(), $1, $2, $3, 0, 1000)
+		VALUES (gen_random_uuid(), $1, $2, $3, 1000, 1000)
 		RETURNING id::text
 	`
 
