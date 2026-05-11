@@ -109,6 +109,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*User, error) {
 }
 
 var ErrInsufficientGameCurrency = errors.New("insufficient game currency")
+var ErrInsufficientShopCurrency = errors.New("insufficient shop currency")
 
 func (r *Repository) ReserveGameCurrency(ctx context.Context, userID string, amount int64) error {
 	if amount <= 0 {
@@ -154,4 +155,97 @@ func (r *Repository) AddGameCurrency(ctx context.Context, userID string, amount 
 		return fmt.Errorf("add game currency: %w", err)
 	}
 	return nil
+}
+
+func (r *Repository) GetCurrencies(ctx context.Context, userID string) (shop int64, game int64, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	const q = `
+		SELECT shop_currency, game_currency
+		FROM users
+		WHERE id = $1
+	`
+
+	err = r.pool.QueryRow(ctx, q, userID).Scan(&shop, &game)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, nil
+		}
+		return 0, 0, fmt.Errorf("select currencies: %w", err)
+	}
+	return shop, game, nil
+}
+
+func (r *Repository) ReserveShopCurrency(ctx context.Context, userID string, amount int64) error {
+	if amount <= 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	const q = `
+		UPDATE users
+		SET shop_currency = shop_currency - $2
+		WHERE id = $1
+		  AND shop_currency >= $2
+	`
+
+	tag, err := r.pool.Exec(ctx, q, userID, amount)
+	if err != nil {
+		return fmt.Errorf("reserve shop currency: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInsufficientShopCurrency
+	}
+	return nil
+}
+
+func (r *Repository) AddShopCurrency(ctx context.Context, userID string, amount int64) error {
+	if amount <= 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	const q = `
+		UPDATE users
+		SET shop_currency = shop_currency + $2
+		WHERE id = $1
+	`
+
+	_, err := r.pool.Exec(ctx, q, userID, amount)
+	if err != nil {
+		return fmt.Errorf("add shop currency: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) ConvertGameToShop1to1(ctx context.Context, userID string, amount int64) (shop int64, game int64, err error) {
+	if amount <= 0 {
+		return r.GetCurrencies(ctx, userID)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	const q = `
+		UPDATE users
+		SET game_currency = game_currency - $2,
+		    shop_currency = shop_currency + $2
+		WHERE id = $1
+		  AND game_currency >= $2
+		RETURNING shop_currency, game_currency
+	`
+
+	err = r.pool.QueryRow(ctx, q, userID, amount).Scan(&shop, &game)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, ErrInsufficientGameCurrency
+		}
+		return 0, 0, fmt.Errorf("convert game->shop: %w", err)
+	}
+	return shop, game, nil
 }

@@ -12,6 +12,7 @@ import (
 	"meme_chess/internal/db"
 	"meme_chess/internal/game"
 	"meme_chess/internal/inventory"
+	"meme_chess/internal/shop"
 	"meme_chess/internal/user"
 	"meme_chess/internal/ws"
 )
@@ -82,6 +83,11 @@ func main() {
 	invService := inventory.NewService(invRepo)
 	invHTTP := &inventory.HTTP{Svc: invService, Auth: authService}
 	inventory.RegisterRoutes(http.DefaultServeMux, invHTTP)
+
+	shopRepo := shop.NewRepository(pg.Pool)
+	shopService := shop.NewService(shopRepo, userRepo)
+	shopHTTP := &shop.HTTP{Svc: shopService, Auth: authService}
+	shop.RegisterRoutes(http.DefaultServeMux, shopHTTP)
 
 	wsHandler := ws.NewHandler(hub, gameService, invService, jwtManager)
 	gameHTTP := &game.HTTP{
