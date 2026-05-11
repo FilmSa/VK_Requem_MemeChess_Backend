@@ -27,7 +27,7 @@ func withCORS(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == http.MethodOptions {
@@ -49,11 +49,13 @@ func registerAuthRoutes(h *auth.Handlers) {
 		{path: "/auth/me", handler: h.Me},
 		{path: "/auth/currency", handler: h.Currency},
 		{path: "/auth/logout", handler: h.Logout},
+		{path: "/auth/change-password", handler: h.ChangePassword},
 		{path: "/api/v1/auth/register", handler: h.Register},
 		{path: "/api/v1/auth/login", handler: h.Login},
 		{path: "/api/v1/auth/me", handler: h.Me},
 		{path: "/api/v1/auth/currency", handler: h.Currency},
 		{path: "/api/v1/auth/logout", handler: h.Logout},
+		{path: "/api/v1/auth/change-password", handler: h.ChangePassword},
 	}
 
 	for _, route := range routes {
