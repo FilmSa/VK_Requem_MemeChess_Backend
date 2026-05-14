@@ -127,6 +127,10 @@ func main() {
 		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/games/")
 		rest = strings.Trim(rest, "/")
 		parts := strings.Split(rest, "/")
+		if len(parts) == 1 && parts[0] == "history" {
+			gameHTTP.GetMyGameHistory(w, r)
+			return
+		}
 		if len(parts) == 2 && parts[0] != "" && parts[1] == "participants" {
 			gameHTTP.GetParticipants(w, r, parts[0])
 			return
@@ -179,6 +183,10 @@ func main() {
 		}
 		if rest == "invite" {
 			gameHTTP.PostInvite(w, r)
+			return
+		}
+		if rest == "history" {
+			gameHTTP.GetMyGameHistory(w, r)
 			return
 		}
 		if rest == "" {

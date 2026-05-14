@@ -304,3 +304,112 @@ func (r *Repository) TryMarkPaidOut(ctx context.Context, gameID string) (bool, e
 	}
 	return tag.RowsAffected() > 0, nil
 }
+
+type UserGameListRow struct {
+	GameID         string
+	Status         string
+	GameMode       string
+	Player1ID      string
+	Player2ID      *string
+	WinnerID       *string
+	FEN            string
+	BetAmount      int64
+	Currency       string
+	FinishedAt     *time.Time
+	FinishedReason *string
+	CreatedAt      time.Time
+	StartedAt      *time.Time
+	TimeControlID  *string
+
+	Player1Username  string
+	Player1AvatarURL *string
+	Player2Username  *string
+	Player2AvatarURL *string
+
+	LastMoveSAN    *string
+	LastMoveNumber *int32
+}
+
+func (r *Repository) ListUserGames(ctx context.Context, userID string, limit, offset int) ([]UserGameListRow, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	const q = `
+		SELECT
+			g.id::text,
+			g.status,
+			g.game_mode,
+			g.player1_id::text,
+			g.player2_id::text,
+			g.winner_id::text,
+			g.fen,
+			g.bet_amount,
+			g.currency,
+			g.finished_at,
+			g.finished_reason,
+			g.created_at,
+			g.started_at,
+			g.time_control_id,
+			p1.username,
+			p1.avatar_url,
+			p2.username,
+			p2.avatar_url,
+			lm.move,
+			lm.move_number
+		FROM games g
+		INNER JOIN users p1 ON p1.id = g.player1_id
+		LEFT JOIN users p2 ON p2.id = g.player2_id
+		LEFT JOIN LATERAL (
+			SELECT m.move, m.move_number
+			FROM moves m
+			WHERE m.game_id = g.id
+			ORDER BY m.move_number DESC
+			LIMIT 1
+		) lm ON true
+		WHERE g.player1_id = $1::uuid OR g.player2_id = $1::uuid
+		ORDER BY (g.status = 'finished') ASC,
+			COALESCE(g.finished_at, g.started_at, g.created_at) DESC NULLS LAST
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := r.pool.Query(ctx, q, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list user games: %w", err)
+	}
+	defer rows.Close()
+
+	var out []UserGameListRow
+	for rows.Next() {
+		var row UserGameListRow
+		if err := rows.Scan(
+			&row.GameID,
+			&row.Status,
+			&row.GameMode,
+			&row.Player1ID,
+			&row.Player2ID,
+			&row.WinnerID,
+			&row.FEN,
+			&row.BetAmount,
+			&row.Currency,
+			&row.FinishedAt,
+			&row.FinishedReason,
+			&row.CreatedAt,
+			&row.StartedAt,
+			&row.TimeControlID,
+			&row.Player1Username,
+			&row.Player1AvatarURL,
+			&row.Player2Username,
+			&row.Player2AvatarURL,
+			&row.LastMoveSAN,
+			&row.LastMoveNumber,
+,
+		); err != nil {
+			return nil, fmt.Errorf("scan user game row: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list user games rows: %w", err)
+	}
+	return out, nil
+}

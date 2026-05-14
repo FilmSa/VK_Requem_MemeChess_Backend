@@ -69,6 +69,30 @@ type State struct {
 	Moves                  []Move       `json:"moves"`
 }
 
+type GameHistoryEntry struct {
+	GameID         string           `json:"game_id"`
+	Status         string           `json:"status"`
+	GameMode       string           `json:"game_mode"`
+	BetAmount      int64            `json:"bet_amount"`
+	Currency       string           `json:"currency"`
+	TimeControlID  string           `json:"time_control_id,omitempty"`
+	YouArePlayer1  bool             `json:"you_are_player1"`
+	Opponent       *HistoryOpponent `json:"opponent,omitempty"`
+	WinnerID       string           `json:"winner_id,omitempty"`
+	FinishedAt     *time.Time       `json:"finished_at,omitempty"`
+	FinishedReason string           `json:"finished_reason,omitempty"`
+	FEN            string           `json:"fen"`
+	LastMove       string           `json:"last_move"`
+	LastMoveNumber int              `json:"last_move_number,omitempty"`
+	CreatedAt      time.Time        `json:"created_at"`
+}
+
+type HistoryOpponent struct {
+	ID        string  `json:"id"`
+	Username  string  `json:"username"`
+	AvatarURL *string `json:"avatar_url,omitempty"`
+}
+
 type Service struct {
 	mu             sync.RWMutex
 	sessions       map[string]*Session
@@ -586,6 +610,104 @@ func (s *Service) GetSession(gameID string) (*Session, bool) {
 
 	session, ok := s.sessions[gameID]
 	return session, ok
+}
+
+func historyOpponentFromListRow(row UserGameListRow, viewerID string) *HistoryOpponent {
+	if row.Player1ID == viewerID {
+		if row.Player2ID == nil || strings.TrimSpace(*row.Player2ID) == "" {
+			return nil
+		}
+		u := strings.TrimSpace(derefStringPtr(row.Player2Username))
+		id := strings.TrimSpace(*row.Player2ID)
+		return &HistoryOpponent{ID: id, Username: u, AvatarURL: row.Player2AvatarURL}
+	}
+
+	return &HistoryOpponent{
+		ID:        row.Player1ID,
+		Username:  strings.TrimSpace(row.Player1Username),
+		AvatarURL: row.Player1AvatarURL,
+	}
+}
+
+func derefStringPtr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func (s *Service) ListUserGameHistory(ctx context.Context, userID string, limit, offset int) ([]GameHistoryEntry, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, ErrForbidden
+	}
+	if s.repository == nil {
+		return []GameHistoryEntry{}, nil
+	}
+
+	rows, err := s.repository.ListUserGames(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]GameHistoryEntry, 0, len(rows))
+	for _, row := range rows {
+		e := GameHistoryEntry{
+			GameID:        row.GameID,
+			Status:        row.Status,
+			GameMode:      row.GameMode,
+			BetAmount:     row.BetAmount,
+			Currency:      row.Currency,
+			YouArePlayer1: row.Player1ID == userID,
+			CreatedAt:     row.CreatedAt,
+			Opponent:      historyOpponentFromListRow(row, userID),
+		}
+		if row.TimeControlID != nil {
+			e.TimeControlID = strings.TrimSpace(*row.TimeControlID)
+		}
+		if row.WinnerID != nil {
+			e.WinnerID = strings.TrimSpace(*row.WinnerID)
+		}
+		e.FinishedAt = row.FinishedAt
+		if row.FinishedReason != nil {
+			e.FinishedReason = strings.TrimSpace(*row.FinishedReason)
+		}
+		e.FEN = row.FEN
+		if row.LastMoveSAN != nil {
+			e.LastMove = strings.TrimSpace(*row.LastMoveSAN)
+		}
+		if row.LastMoveNumber != nil {
+			e.LastMoveNumber = int(*row.LastMoveNumber)
+		}
+
+		if sess, ok := s.GetSession(row.GameID); ok {
+			snap := sess.Snapshot()
+			e.Status = snap.Status
+			e.FEN = snap.FEN
+			if len(snap.Moves) > 0 {
+				last := snap.Moves[len(snap.Moves)-1]
+				e.LastMoveNumber = last.Number
+				e.LastMove = last.Move
+			} else {
+				e.LastMoveNumber = 0
+				e.LastMove = ""
+			}
+			if snap.BotGame {
+				e.Opponent = &HistoryOpponent{
+					ID:       botUserID,
+					Username: botDisplayName(),
+				}
+			}
+			if strings.TrimSpace(snap.WinnerID) != "" {
+				e.WinnerID = snap.WinnerID
+			}
+			if strings.TrimSpace(snap.FinishedReason) != "" {
+				e.FinishedReason = snap.FinishedReason
+			}
+		}
+
+		out = append(out, e)
+	}
+	return out, nil
 }
 
 func (s *Service) JoinGame(ctx context.Context, gameID, userID string) (State, error) {

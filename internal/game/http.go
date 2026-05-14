@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -489,6 +490,43 @@ func (h *HTTP) GetParticipants(w http.ResponseWriter, r *http.Request, gameID st
 		Player1: player1,
 		Player2: player2,
 	})
+}
+
+func (h *HTTP) GetMyGameHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	participant, err := h.AuthService.UserFromBearer(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+
+	limit := 50
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+			if limit > 100 {
+				limit = 100
+			}
+		}
+	}
+	offset := 0
+	if v := strings.TrimSpace(r.URL.Query().Get("offset")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	games, err := h.Svc.ListUserGameHistory(r.Context(), participant.ID, limit, offset)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load game history"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"games": games})
 }
 
 func (h *HTTP) PostAnalyzeMove(w http.ResponseWriter, r *http.Request, gameID string) {
