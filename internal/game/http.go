@@ -456,37 +456,71 @@ func (h *HTTP) GetParticipants(w http.ResponseWriter, r *http.Request, gameID st
 	}
 
 	session, ok := h.Svc.GetSession(gameID)
-	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "game not found"})
-		return
-	}
+	if ok {
+		snapshot := session.Snapshot()
+		if participant.ID != snapshot.Player1ID && participant.ID != snapshot.Player2ID {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "not a participant"})
+			return
+		}
 
-	snapshot := session.Snapshot()
-	if participant.ID != snapshot.Player1ID && participant.ID != snapshot.Player2ID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not a participant"})
-		return
-	}
-
-	player1, err := h.loadParticipant(r, snapshot.Player1ID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load player profile"})
-		return
-	}
-
-	var player2 *inviteParticipant
-	if snapshot.BotGame {
-		bot := buildBotParticipant()
-		player2 = &bot
-	} else {
-		player2, err = h.loadParticipant(r, snapshot.Player2ID)
+		player1, err := h.loadParticipant(r, snapshot.Player1ID)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load player profile"})
 			return
 		}
+
+		var player2 *inviteParticipant
+		if snapshot.BotGame {
+			bot := buildBotParticipant()
+			player2 = &bot
+		} else {
+			player2, err = h.loadParticipant(r, snapshot.Player2ID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load player profile"})
+				return
+			}
+		}
+
+		writeJSON(w, http.StatusOK, participantsResponse{
+			GameID:  snapshot.GameID,
+			Player1: player1,
+			Player2: player2,
+		})
+		return
+	}
+
+	storedParticipants, err := h.Svc.GetStoredParticipants(r.Context(), gameID, participant.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrGameNotFound):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "game not found"})
+		case errors.Is(err, ErrForbidden):
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "not a participant"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load player profile"})
+		}
+		return
+	}
+
+	player1 := &inviteParticipant{
+		ID:        storedParticipants.Player1.ID,
+		Username:  storedParticipants.Player1.Username,
+		AvatarURL: storedParticipants.Player1.AvatarURL,
+		IsGuest:   auth.IsGuestUsername(storedParticipants.Player1.Username),
+	}
+
+	var player2 *inviteParticipant
+	if storedParticipants.Player2 != nil {
+		player2 = &inviteParticipant{
+			ID:        storedParticipants.Player2.ID,
+			Username:  storedParticipants.Player2.Username,
+			AvatarURL: storedParticipants.Player2.AvatarURL,
+			IsGuest:   auth.IsGuestUsername(storedParticipants.Player2.Username),
+		}
 	}
 
 	writeJSON(w, http.StatusOK, participantsResponse{
-		GameID:  snapshot.GameID,
+		GameID:  storedParticipants.GameID,
 		Player1: player1,
 		Player2: player2,
 	})
@@ -520,13 +554,24 @@ func (h *HTTP) GetMyGameHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	games, err := h.Svc.ListUserGameHistory(r.Context(), participant.ID, limit, offset)
+	games, err := h.Svc.ListUserGameHistory(r.Context(), participant.ID, limit+1, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load game history"})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"games": games})
+	hasMore := len(games) > limit
+	if hasMore {
+		games = games[:limit]
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"games":       games,
+		"limit":       limit,
+		"offset":      offset,
+		"has_more":    hasMore,
+		"next_offset": offset + len(games),
+	})
 }
 
 func (h *HTTP) PostAnalyzeMove(w http.ResponseWriter, r *http.Request, gameID string) {

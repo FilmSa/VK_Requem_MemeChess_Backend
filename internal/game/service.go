@@ -93,6 +93,18 @@ type HistoryOpponent struct {
 	AvatarURL *string `json:"avatar_url,omitempty"`
 }
 
+type ParticipantProfile struct {
+	ID        string
+	Username  string
+	AvatarURL *string
+}
+
+type StoredParticipants struct {
+	GameID  string
+	Player1 ParticipantProfile
+	Player2 *ParticipantProfile
+}
+
 type Service struct {
 	mu             sync.RWMutex
 	sessions       map[string]*Session
@@ -634,6 +646,49 @@ func derefStringPtr(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+func (s *Service) GetStoredParticipants(ctx context.Context, gameID, viewerID string) (*StoredParticipants, error) {
+	if strings.TrimSpace(gameID) == "" {
+		return nil, ErrGameNotFound
+	}
+	if strings.TrimSpace(viewerID) == "" {
+		return nil, ErrForbidden
+	}
+	if s.repository == nil {
+		return nil, ErrGameNotFound
+	}
+
+	row, err := s.repository.GetGameParticipants(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, ErrGameNotFound
+	}
+
+	if viewerID != row.Player1ID && (row.Player2ID == nil || viewerID != strings.TrimSpace(*row.Player2ID)) {
+		return nil, ErrForbidden
+	}
+
+	result := &StoredParticipants{
+		GameID: row.GameID,
+		Player1: ParticipantProfile{
+			ID:        row.Player1ID,
+			Username:  strings.TrimSpace(row.Player1Username),
+			AvatarURL: row.Player1AvatarURL,
+		},
+	}
+
+	if row.Player2ID != nil && strings.TrimSpace(*row.Player2ID) != "" {
+		result.Player2 = &ParticipantProfile{
+			ID:        strings.TrimSpace(*row.Player2ID),
+			Username:  strings.TrimSpace(derefStringPtr(row.Player2Username)),
+			AvatarURL: row.Player2AvatarURL,
+		}
+	}
+
+	return result, nil
 }
 
 func (s *Service) ListUserGameHistory(ctx context.Context, userID string, limit, offset int) ([]GameHistoryEntry, error) {

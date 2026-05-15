@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -330,6 +331,16 @@ type UserGameListRow struct {
 	LastMoveNumber *int32
 }
 
+type GameParticipantsRow struct {
+	GameID           string
+	Player1ID        string
+	Player1Username  string
+	Player1AvatarURL *string
+	Player2ID        *string
+	Player2Username  *string
+	Player2AvatarURL *string
+}
+
 func (r *Repository) ListUserGames(ctx context.Context, userID string, limit, offset int) ([]UserGameListRow, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -367,8 +378,8 @@ func (r *Repository) ListUserGames(ctx context.Context, userID string, limit, of
 			LIMIT 1
 		) lm ON true
 		WHERE g.player1_id = $1::uuid OR g.player2_id = $1::uuid
-		ORDER BY (g.status = 'finished') ASC,
-			COALESCE(g.finished_at, g.started_at, g.created_at) DESC NULLS LAST
+		ORDER BY COALESCE(g.finished_at, g.started_at, g.created_at) DESC NULLS LAST,
+			g.created_at DESC
 		LIMIT $2 OFFSET $3
 	`
 
@@ -402,7 +413,6 @@ func (r *Repository) ListUserGames(ctx context.Context, userID string, limit, of
 			&row.Player2AvatarURL,
 			&row.LastMoveSAN,
 			&row.LastMoveNumber,
-,
 		); err != nil {
 			return nil, fmt.Errorf("scan user game row: %w", err)
 		}
@@ -412,4 +422,43 @@ func (r *Repository) ListUserGames(ctx context.Context, userID string, limit, of
 		return nil, fmt.Errorf("list user games rows: %w", err)
 	}
 	return out, nil
+}
+
+func (r *Repository) GetGameParticipants(ctx context.Context, gameID string) (*GameParticipantsRow, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	const q = `
+		SELECT
+			g.id::text,
+			g.player1_id::text,
+			p1.username,
+			p1.avatar_url,
+			g.player2_id::text,
+			p2.username,
+			p2.avatar_url
+		FROM games g
+		INNER JOIN users p1 ON p1.id = g.player1_id
+		LEFT JOIN users p2 ON p2.id = g.player2_id
+		WHERE g.id = $1
+	`
+
+	var row GameParticipantsRow
+	err := r.pool.QueryRow(ctx, q, gameID).Scan(
+		&row.GameID,
+		&row.Player1ID,
+		&row.Player1Username,
+		&row.Player1AvatarURL,
+		&row.Player2ID,
+		&row.Player2Username,
+		&row.Player2AvatarURL,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get game participants: %w", err)
+	}
+
+	return &row, nil
 }

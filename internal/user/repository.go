@@ -29,6 +29,12 @@ type User struct {
 	PasswordHash string
 }
 
+type PublicProfile struct {
+	ID        string
+	Username  string
+	AvatarURL *string
+}
+
 func (r *Repository) Create(ctx context.Context, username string, email *string, passwordHash string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -106,6 +112,31 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*User, error) {
 		return nil, fmt.Errorf("select user: %w", err)
 	}
 	return &u, nil
+}
+
+func (r *Repository) GetPublicProfileByID(ctx context.Context, id string) (*PublicProfile, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	const q = `
+		SELECT id::text, username, avatar_url
+		FROM users
+		WHERE id = $1
+	`
+
+	var profile PublicProfile
+	err := r.pool.QueryRow(ctx, q, id).Scan(
+		&profile.ID,
+		&profile.Username,
+		&profile.AvatarURL,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("select public profile: %w", err)
+	}
+	return &profile, nil
 }
 
 var ErrInsufficientGameCurrency = errors.New("insufficient game currency")

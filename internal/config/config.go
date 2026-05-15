@@ -10,6 +10,7 @@ type Config struct {
 	JWTSecret        string
 	PostgresDSN      string
 	FrontendJoinBase string // e.g. http://localhost:5173; used to build /play/{game_id} links
+	UploadsDir       string
 }
 
 func Load() Config {
@@ -18,6 +19,7 @@ func Load() Config {
 		JWTSecret:        getEnv("JWT_SECRET", "super-secret-dev-key"),
 		PostgresDSN:      getEnv("POSTGRES_DSN", "postgres://memechess:memechess@localhost:5432/meme_chess?sslmode=disable"),
 		FrontendJoinBase: strings.TrimSuffix(getEnv("FRONTEND_JOIN_BASE", "http://localhost:5173"), "/"),
+		UploadsDir:       strings.TrimSpace(getEnv("UPLOADS_DIR", "uploads")),
 	}
 }
 

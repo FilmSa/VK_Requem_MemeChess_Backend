@@ -28,7 +28,7 @@ func withCORS(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == http.MethodOptions {
@@ -48,11 +48,13 @@ func registerAuthRoutes(h *auth.Handlers) {
 		{path: "/auth/register", handler: h.Register},
 		{path: "/auth/login", handler: h.Login},
 		{path: "/auth/me", handler: h.Me},
+		{path: "/auth/avatar", handler: h.UploadAvatar},
 		{path: "/auth/currency", handler: h.Currency},
 		{path: "/auth/logout", handler: h.Logout},
 		{path: "/api/v1/auth/register", handler: h.Register},
 		{path: "/api/v1/auth/login", handler: h.Login},
 		{path: "/api/v1/auth/me", handler: h.Me},
+		{path: "/api/v1/auth/avatar", handler: h.UploadAvatar},
 		{path: "/api/v1/auth/currency", handler: h.Currency},
 		{path: "/api/v1/auth/logout", handler: h.Logout},
 	}
@@ -82,7 +84,10 @@ func main() {
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret)
 	userRepo := user.NewRepository(pg.Pool)
 	authService := auth.NewService(userRepo, jwtManager)
-	authHandlers := &auth.Handlers{Service: authService}
+	authHandlers := &auth.Handlers{
+		Service:    authService,
+		UploadsDir: cfg.UploadsDir,
+	}
 
 	hub := ws.NewHub()
 	gameRepo := game.NewRepository(pg.Pool)
@@ -174,6 +179,7 @@ func main() {
 	})
 
 	http.Handle("/emoji/", http.StripPrefix("/emoji/", http.FileServer(http.Dir("emoji"))))
+	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(cfg.UploadsDir))))
 	http.HandleFunc("/games/", func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/games/")
 		rest = strings.TrimSuffix(rest, "/")
