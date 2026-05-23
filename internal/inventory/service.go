@@ -49,6 +49,10 @@ func (s *Service) GetInventory(ctx context.Context, userID string) (Inventory, e
 	}, nil
 }
 
+func (s *Service) GetSelection(ctx context.Context, userID string) (Selection, error) {
+	return s.repo.GetSelection(ctx, userID)
+}
+
 func (s *Service) SetSelection(ctx context.Context, userID string, sel Selection) (Selection, error) {
 	normalized, err := s.normalizeSelection(sel)
 	if err != nil {

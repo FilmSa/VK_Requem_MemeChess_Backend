@@ -17,9 +17,9 @@ const (
 	botEasy        = "easy"
 	botMedium      = "medium"
 	botHard        = "hard"
-	botEasyDepth   = 1
-	botMediumDepth = 2
-	botHardDepth   = 3
+	botEasyDepth   = 3
+	botMediumDepth = 6
+	botHardDepth   = 9
 	botMateScore   = 1000000
 	botNegativeInf = -10000000
 	botPositiveInf = 10000000

@@ -880,6 +880,7 @@ func (s *Service) MakeMove(ctx context.Context, gameID, userID, move string) (St
 		}
 		return State{}, MoveResult{}, err
 	}
+	result = s.decorateMoveWithMeme(gameID, session, state, result)
 
 	cursor, err := s.variantTracker.AdvanceGame(gameID, result.Move, state.FEN)
 	if err != nil {
@@ -892,14 +893,16 @@ func (s *Service) MakeMove(ctx context.Context, gameID, userID, move string) (St
 		moveNumber := len(state.Moves)
 
 		if err := s.repository.SaveMove(ctx, SaveMoveParams{
-			GameID:      gameID,
-			PlayerID:    userID,
-			MoveNumber:  moveNumber,
-			Move:        result.Move,
-			FEN:         result.FEN,
-			IsCapture:   result.IsCapture,
-			IsCheck:     result.IsCheck,
-			IsCheckmate: result.IsCheckmate,
+			GameID:       gameID,
+			PlayerID:     userID,
+			MoveNumber:   moveNumber,
+			Move:         result.Move,
+			FEN:          result.FEN,
+			IsCapture:    result.IsCapture,
+			IsCheck:      result.IsCheck,
+			IsCheckmate:  result.IsCheckmate,
+			MemeID:       nullableString(result.MemeID, ""),
+			MemeCategory: nullableString(result.MemeCategory, ""),
 		}); err != nil {
 			return State{}, MoveResult{}, err
 		}
@@ -968,6 +971,7 @@ func (s *Service) PlayBotTurn(ctx context.Context, gameID string) (State, MoveRe
 	if err != nil {
 		return State{}, MoveResult{}, false, err
 	}
+	result = s.decorateMoveWithMeme(gameID, session, state, result)
 
 	cursor, err := s.variantTracker.AdvanceGame(gameID, result.Move, state.FEN)
 	if err != nil {

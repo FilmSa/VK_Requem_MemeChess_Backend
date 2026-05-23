@@ -13,20 +13,16 @@ const (
 )
 
 type Engine struct {
-	gen      *movegen.Generator
-	rules    rules.RuleSet
-	static   StaticEvaluator
-	ordering MoveOrdering
-	tt       TranspositionTable
+	gen    *movegen.Generator
+	rules  rules.RuleSet
+	static StaticEvaluator
 }
 
 func NewEngine(rs rules.RuleSet) *Engine {
 	return &Engine{
-		gen:      movegen.NewGenerator(rs),
-		rules:    rs,
-		static:   NewStaticEvaluator(),
-		ordering: NewMoveOrdering(),
-		tt:       NewTranspositionTable(),
+		gen:    movegen.NewGenerator(rs),
+		rules:  rs,
+		static: NewStaticEvaluator(),
 	}
 }
 
@@ -67,10 +63,12 @@ func (e *Engine) AnalyzePosition(gs *position.GameState, depth int) *Result {
 	}
 
 	hash := gs.Hash()
+	key := gs.Key()
 	best := &Result{
 		Hash:  hash,
 		Depth: depth,
 	}
+	tt := NewTranspositionTable()
 
 	for currentDepth := 1; currentDepth <= depth; currentDepth++ {
 		rootMoves := e.gen.GenerateLegalMoves(gs)
@@ -86,10 +84,10 @@ func (e *Engine) AnalyzePosition(gs *position.GameState, depth int) *Result {
 		}
 
 		ttMove := position.NullMove()
-		if entry, ok := e.tt.Get(hash); ok {
+		if entry, ok := tt.Get(key); ok {
 			ttMove = entry.BestMove
 		}
-		ordered := e.ordering.Order(gs, rootMoves, ttMove)
+		ordered := e.orderMoves(gs, rootMoves, ttMove, 0)
 
 		alpha := negInf
 		beta := posInf
@@ -99,13 +97,26 @@ func (e *Engine) AnalyzePosition(gs *position.GameState, depth int) *Result {
 		moveScores := make([]MoveScore, 0, len(ordered))
 		nodes := 0
 
-		for _, mv := range ordered {
+		for i, mv := range ordered {
 			if err := gs.ApplyMove(mv); err != nil {
 				continue
 			}
 
-			score, pv := e.negamax(gs, currentDepth-1, 1, -beta, -alpha, &nodes)
-			score = -score
+			var (
+				score int
+				pv    []position.Move
+			)
+			if i == 0 {
+				score, pv = e.negamax(gs, tt, currentDepth-1, 1, -beta, -alpha, &nodes)
+				score = -score
+			} else {
+				score, pv = e.negamax(gs, tt, currentDepth-1, 1, -alpha-1, -alpha, &nodes)
+				score = -score
+				if score > alpha && score < beta {
+					score, pv = e.negamax(gs, tt, currentDepth-1, 1, -beta, -alpha, &nodes)
+					score = -score
+				}
+			}
 
 			if err := gs.UndoMove(); err != nil {
 				panic(err)
@@ -138,28 +149,27 @@ func (e *Engine) AnalyzePosition(gs *position.GameState, depth int) *Result {
 			Nodes:     nodes,
 		}
 
-		e.tt.Put(TTEntry{
-			Hash:     hash,
+		tt.Put(TTEntry{
+			Hash:     key,
 			Depth:    currentDepth,
 			Score:    bestScore,
 			Bound:    BoundExact,
 			BestMove: bestMove,
-			PV:       append([]position.Move(nil), bestPV...),
 		})
 	}
 
 	return best
 }
 
-func (e *Engine) negamax(gs *position.GameState, depth int, ply int, alpha, beta int, nodes *int) (int, []position.Move) {
+func (e *Engine) negamax(gs *position.GameState, tt TranspositionTable, depth int, ply int, alpha, beta int, nodes *int) (int, []position.Move) {
 	*nodes = *nodes + 1
 
-	hash := gs.Hash()
+	key := gs.Key()
 	alphaOrig := alpha
-	if entry, ok := e.tt.Get(hash); ok && entry.Depth >= depth {
+	if entry, ok := tt.Get(key); ok && entry.Depth >= depth {
 		switch entry.Bound {
 		case BoundExact:
-			return entry.Score, append([]position.Move(nil), entry.PV...)
+			return entry.Score, nil
 		case BoundLower:
 			if entry.Score > alpha {
 				alpha = entry.Score
@@ -170,12 +180,31 @@ func (e *Engine) negamax(gs *position.GameState, depth int, ply int, alpha, beta
 			}
 		}
 		if alpha >= beta {
-			return entry.Score, append([]position.Move(nil), entry.PV...)
+			return entry.Score, nil
 		}
 	}
 
 	if depth == 0 {
 		return e.quiescence(gs, 0, alpha, beta, nodes), nil
+	}
+
+	inCheck := e.rules.IsCheck(gs, gs.SideToMove)
+	if !inCheck && depth >= 3 {
+		nullDepth := depth - 3
+		if nullDepth < 0 {
+			nullDepth = 0
+		}
+
+		gs.ApplyNullMove()
+		score, _ := e.negamax(gs, tt, nullDepth, ply+1, -beta, -beta+1, nodes)
+		score = -score
+		if err := gs.UndoMove(); err != nil {
+			panic(err)
+		}
+
+		if score >= beta {
+			return beta, nil
+		}
 	}
 
 	moves := e.gen.GenerateLegalMoves(gs)
@@ -184,22 +213,48 @@ func (e *Engine) negamax(gs *position.GameState, depth int, ply int, alpha, beta
 	}
 
 	ttMove := position.NullMove()
-	if entry, ok := e.tt.Get(hash); ok {
+	if entry, ok := tt.Get(key); ok {
 		ttMove = entry.BestMove
 	}
-	ordered := e.ordering.Order(gs, moves, ttMove)
+	ordered := e.orderMoves(gs, moves, ttMove, ply)
 
 	bestScore := negInf
 	bestMove := position.NullMove()
 	var bestPV []position.Move
 
-	for _, mv := range ordered {
+	for i, mv := range ordered {
+		tactical := isTacticalMove(gs, mv)
 		if err := gs.ApplyMove(mv); err != nil {
 			continue
 		}
+		givesCheck := e.rules.IsCheck(gs, gs.SideToMove)
 
-		score, childPV := e.negamax(gs, depth-1, ply+1, -beta, -alpha, nodes)
-		score = -score
+		var (
+			score   int
+			childPV []position.Move
+		)
+		if i == 0 {
+			score, childPV = e.negamax(gs, tt, depth-1, ply+1, -beta, -alpha, nodes)
+			score = -score
+		} else {
+			searchDepth := depth - 1
+			reduced := false
+			if i >= 3 && depth >= 4 && !inCheck && !tactical && !givesCheck {
+				searchDepth--
+				reduced = true
+			}
+
+			score, childPV = e.negamax(gs, tt, searchDepth, ply+1, -alpha-1, -alpha, nodes)
+			score = -score
+			if reduced && score > alpha {
+				score, childPV = e.negamax(gs, tt, depth-1, ply+1, -alpha-1, -alpha, nodes)
+				score = -score
+			}
+			if score > alpha && score < beta {
+				score, childPV = e.negamax(gs, tt, depth-1, ply+1, -beta, -alpha, nodes)
+				score = -score
+			}
+		}
 
 		if err := gs.UndoMove(); err != nil {
 			panic(err)
@@ -226,13 +281,12 @@ func (e *Engine) negamax(gs *position.GameState, depth int, ply int, alpha, beta
 		bound = BoundLower
 	}
 
-	e.tt.Put(TTEntry{
-		Hash:     hash,
+	tt.Put(TTEntry{
+		Hash:     key,
 		Depth:    depth,
 		Score:    bestScore,
 		Bound:    bound,
 		BestMove: bestMove,
-		PV:       append([]position.Move(nil), bestPV...),
 	})
 
 	return bestScore, bestPV

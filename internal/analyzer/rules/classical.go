@@ -57,20 +57,7 @@ func (r *ClassicalRuleSet) IsCheck(gs *position.GameState, color position.Color)
 		return false
 	}
 
-	enemy := color.Opponent()
-	for i := 0; i < 64; i++ {
-		from := position.Square(i)
-		piece := gs.PieceAt(from)
-		if piece.IsZero() || piece.Color != enemy {
-			continue
-		}
-
-		if AttacksSquare(gs, from, kingSq, piece) {
-			return true
-		}
-	}
-
-	return false
+	return squareAttackedBy(gs, kingSq, color.Opponent())
 }
 
 func (r *ClassicalRuleSet) isPseudoLegal(gs *position.GameState, mv position.Move, piece position.Piece) bool {
@@ -208,14 +195,82 @@ func (r *ClassicalRuleSet) validateCastlePath(gs *position.GameState, mv positio
 }
 
 func findKing(gs *position.GameState, color position.Color) (position.Square, bool) {
-	for i := 0; i < 64; i++ {
-		sq := position.Square(i)
-		piece := gs.PieceAt(sq)
-		if !piece.IsZero() && piece.Color == color && piece.Type == position.King {
-			return sq, true
+	return gs.KingSquare(color)
+}
+
+func squareAttackedBy(gs *position.GameState, target position.Square, attacker position.Color) bool {
+	file := target.File()
+	rank := target.Rank()
+
+	pawnRank := rank - 1
+	if attacker == position.Black {
+		pawnRank = rank + 1
+	}
+	if pawnRank >= 0 && pawnRank <= 7 {
+		for _, df := range [2]int{-1, 1} {
+			f := file + df
+			if f < 0 || f > 7 {
+				continue
+			}
+			sq := position.MustSquare(f, pawnRank)
+			piece := gs.PieceAt(sq)
+			if piece.Color == attacker && piece.Type == position.Pawn {
+				return true
+			}
 		}
 	}
-	return position.NoSquare, false
+
+	for _, d := range [][2]int{
+		{1, 2}, {2, 1}, {-1, 2}, {-2, 1},
+		{1, -2}, {2, -1}, {-1, -2}, {-2, -1},
+	} {
+		f := file + d[0]
+		r := rank + d[1]
+		if f < 0 || f > 7 || r < 0 || r > 7 {
+			continue
+		}
+		piece := gs.PieceAt(position.MustSquare(f, r))
+		if piece.Color == attacker && piece.Type == position.Knight {
+			return true
+		}
+	}
+
+	for _, d := range [][2]int{
+		{1, 0}, {-1, 0}, {0, 1}, {0, -1},
+		{1, 1}, {1, -1}, {-1, 1}, {-1, -1},
+	} {
+		f := file + d[0]
+		r := rank + d[1]
+		if f < 0 || f > 7 || r < 0 || r > 7 {
+			continue
+		}
+		piece := gs.PieceAt(position.MustSquare(f, r))
+		if piece.Color == attacker && piece.Type == position.King {
+			return true
+		}
+	}
+
+	for _, d := range [][2]int{{1, 1}, {1, -1}, {-1, 1}, {-1, -1}} {
+		for f, r := file+d[0], rank+d[1]; f >= 0 && f <= 7 && r >= 0 && r <= 7; f, r = f+d[0], r+d[1] {
+			piece := gs.PieceAt(position.MustSquare(f, r))
+			if piece.IsZero() {
+				continue
+			}
+			return piece.Color == attacker && (piece.Type == position.Bishop || piece.Type == position.Queen)
+		}
+	}
+
+	for _, d := range [][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+		for f, r := file+d[0], rank+d[1]; f >= 0 && f <= 7 && r >= 0 && r <= 7; f, r = f+d[0], r+d[1] {
+			piece := gs.PieceAt(position.MustSquare(f, r))
+			if piece.IsZero() {
+				continue
+			}
+			return piece.Color == attacker && (piece.Type == position.Rook || piece.Type == position.Queen)
+		}
+	}
+
+	return false
 }
 
 func AttacksSquare(gs *position.GameState, from, to position.Square, piece position.Piece) bool {

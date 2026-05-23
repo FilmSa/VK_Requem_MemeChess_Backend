@@ -163,14 +163,16 @@ func (r *Repository) SetPlayer2(ctx context.Context, gameID, player2ID string) e
 }
 
 type SaveMoveParams struct {
-	GameID      string
-	PlayerID    string
-	MoveNumber  int
-	Move        string
-	FEN         string
-	IsCapture   bool
-	IsCheck     bool
-	IsCheckmate bool
+	GameID       string
+	PlayerID     string
+	MoveNumber   int
+	Move         string
+	FEN          string
+	IsCapture    bool
+	IsCheck      bool
+	IsCheckmate  bool
+	MemeID       *string
+	MemeCategory *string
 }
 
 func (r *Repository) SaveMove(ctx context.Context, p SaveMoveParams) error {
@@ -179,8 +181,8 @@ func (r *Repository) SaveMove(ctx context.Context, p SaveMoveParams) error {
 
 	query := `
 		INSERT INTO moves (
-			game_id, player_id, move_number, move, fen, is_capture, is_check, is_checkmate
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			game_id, player_id, move_number, move, fen, is_capture, is_check, is_checkmate, meme_id, meme_category
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`
 
 	_, err := r.pool.Exec(ctx, query,
@@ -192,12 +194,52 @@ func (r *Repository) SaveMove(ctx context.Context, p SaveMoveParams) error {
 		p.IsCapture,
 		p.IsCheck,
 		p.IsCheckmate,
+		p.MemeID,
+		p.MemeCategory,
 	)
 	if err != nil {
-		return fmt.Errorf("insert move: %w", err)
+		if !isMissingMoveMemeColumns(err) {
+			return fmt.Errorf("insert move: %w", err)
+		}
+
+		legacyQuery := `
+			INSERT INTO moves (
+				game_id, player_id, move_number, move, fen, is_capture, is_check, is_checkmate
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`
+
+		_, legacyErr := r.pool.Exec(ctx, legacyQuery,
+			p.GameID,
+			p.PlayerID,
+			p.MoveNumber,
+			p.Move,
+			p.FEN,
+			p.IsCapture,
+			p.IsCheck,
+			p.IsCheckmate,
+		)
+		if legacyErr != nil {
+			return fmt.Errorf("insert move: %w", legacyErr)
+		}
 	}
 
 	return nil
+}
+
+func isMissingMoveMemeColumns(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	for _, column := range []string{"meme_id", "meme_category"} {
+		if strings.Contains(msg, column) &&
+			(strings.Contains(msg, "does not exist") || strings.Contains(msg, "unknown column")) {
+			return true
+		}
+	}
+
+	return false
 }
 
 type UpdateGameStateParams struct {

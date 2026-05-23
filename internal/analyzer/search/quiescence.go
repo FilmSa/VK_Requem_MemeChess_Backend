@@ -2,10 +2,9 @@ package search
 
 import (
 	"meme_chess/internal/analyzer/position"
-	"meme_chess/internal/analyzer/rules"
 )
 
-const maxQuiescenceDepth = 8
+const maxQuiescenceDepth = 4
 
 func (e *Engine) quiescence(gs *position.GameState, ply int, alpha, beta int, nodes *int) int {
 	*nodes = *nodes + 1
@@ -26,7 +25,7 @@ func (e *Engine) quiescence(gs *position.GameState, ply int, alpha, beta int, no
 		return standPat
 	}
 
-	ordered := e.ordering.Order(gs, moves, position.NullMove())
+	ordered := e.orderMoves(gs, moves, position.NullMove(), ply)
 	for _, mv := range ordered {
 		if err := gs.ApplyMove(mv); err != nil {
 			continue
@@ -50,11 +49,26 @@ func (e *Engine) quiescence(gs *position.GameState, ply int, alpha, beta int, no
 }
 
 func (e *Engine) noisyMoves(gs *position.GameState) []position.Move {
-	all := e.gen.GenerateLegalMoves(gs)
-	out := make([]position.Move, 0, len(all))
+	pseudo := e.gen.GeneratePseudoMoves(gs)
+	out := make([]position.Move, 0, len(pseudo))
+	movingSide := gs.SideToMove
 
-	for _, mv := range all {
-		if e.isNoisyMove(gs, mv) {
+	for _, mv := range pseudo {
+		if mv.Kind != position.MovePromotion &&
+			mv.Kind != position.MoveEnPassant &&
+			capturedPieceForMove(gs, mv).IsZero() {
+			continue
+		}
+		if err := gs.ApplyMove(mv); err != nil {
+			continue
+		}
+
+		legal := !e.rules.IsCheck(gs, movingSide)
+		if err := gs.UndoMove(); err != nil {
+			panic(err)
+		}
+
+		if legal {
 			out = append(out, mv)
 		}
 	}
@@ -70,29 +84,14 @@ func (e *Engine) isNoisyMove(gs *position.GameState, mv position.Move) bool {
 		return true
 	}
 
-	next := gs.Clone()
-	if err := next.ApplyMove(mv); err != nil {
+	if err := gs.ApplyMove(mv); err != nil {
 		return false
+	}
+	inCheck := e.rules.IsCheck(gs, gs.SideToMove)
+	if err := gs.UndoMove(); err != nil {
+		panic(err)
 	}
 
 	// Keep forcing continuations alive inside q-search.
-	if e.rules.IsCheck(next, next.SideToMove) {
-		return true
-	}
-
-	// Tactical threat: move attacks an undefended enemy piece.
-	mover := next.SideToMove.Opponent()
-	movedPiece := next.PieceAt(mv.To)
-	for i := 0; i < 64; i++ {
-		targetSq := position.Square(i)
-		target := next.PieceAt(targetSq)
-		if target.IsZero() || target.Color == mover {
-			continue
-		}
-		if rules.AttacksSquare(next, mv.To, targetSq, movedPiece) && isWeakTarget(next, targetSq, target.Color) {
-			return true
-		}
-	}
-
-	return false
+	return inCheck
 }

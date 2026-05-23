@@ -19,6 +19,7 @@ const (
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 8192
+	botMoveDelay   = 4 * time.Second
 )
 
 type Client struct {
@@ -29,6 +30,8 @@ type Client struct {
 	send        chan []byte
 	userID      string
 	gameIDs     map[string]struct{}
+	botDelay    time.Duration
+	afterFunc   func(time.Duration, func()) *time.Timer
 }
 
 func NewClient(hub *Hub, gameService *game.Service, invService *inventory.Service, conn *websocket.Conn, userID string) *Client {
@@ -40,6 +43,8 @@ func NewClient(hub *Hub, gameService *game.Service, invService *inventory.Servic
 		send:        make(chan []byte, 256),
 		userID:      userID,
 		gameIDs:     make(map[string]struct{}),
+		botDelay:    botMoveDelay,
+		afterFunc:   time.AfterFunc,
 	}
 }
 
@@ -337,6 +342,7 @@ func (c *Client) handleJoinGame(msg IncomingMessage) {
 	})
 
 	c.broadcastGameState(payload.GameID)
+	c.scheduleBotMoveIfNeeded(payload.GameID, state)
 }
 
 func (c *Client) handleGameMove(msg IncomingMessage) {
@@ -387,30 +393,64 @@ func (c *Client) handleGameMove(msg IncomingMessage) {
 
 	c.broadcastMoveOutcome(payload.GameID, c.userID, state, result)
 
-	botState, botResult, moved, err := c.gameService.PlayBotTurn(context.Background(), payload.GameID)
-	if err != nil {
-		c.sendError("", "BOT_MOVE_FAILED", "failed to compute bot move")
-		return
+	c.scheduleBotMoveIfNeeded(payload.GameID, state)
+}
+
+func shouldScheduleBotMove(state game.State) bool {
+	if !state.BotGame || state.Status != string(game.StatusActive) {
+		return false
 	}
-	if moved {
-		c.broadcastJSON(payload.GameID, OutgoingMessage{
-			Type:    "game.state",
-			Payload: botState,
-		})
-		c.broadcastMoveOutcome(payload.GameID, botState.Player2ID, botState, botResult)
+
+	player2ID := strings.TrimSpace(state.Player2ID)
+	currentTurnUserID := strings.TrimSpace(state.CurrentTurnUserID)
+	return player2ID != "" && currentTurnUserID == player2ID
+}
+
+func (c *Client) scheduleBotMoveIfNeeded(gameID string, state game.State) {
+	if !shouldScheduleBotMove(state) {
 		return
 	}
 
-	if botState.Status == string(game.StatusFinished) && botState.FinishedReason == "stalemate" {
-		c.broadcastJSON(payload.GameID, OutgoingMessage{
-			Type:    "game.state",
-			Payload: botState,
-		})
-		c.broadcastJSON(payload.GameID, OutgoingMessage{
-			Type:    "game.finished",
-			Payload: buildFinishedPayload(payload.GameID, botState),
-		})
+	c.scheduleBotMove(gameID)
+}
+
+func (c *Client) scheduleBotMove(gameID string) {
+	afterFunc := c.afterFunc
+	if afterFunc == nil {
+		afterFunc = time.AfterFunc
 	}
+
+	delay := c.botDelay
+	if delay < 0 {
+		delay = 0
+	}
+
+	afterFunc(delay, func() {
+		botState, botResult, moved, err := c.gameService.PlayBotTurn(context.Background(), gameID)
+		if err != nil {
+			c.sendError("", "BOT_MOVE_FAILED", "failed to compute bot move")
+			return
+		}
+		if moved {
+			c.broadcastJSON(gameID, OutgoingMessage{
+				Type:    "game.state",
+				Payload: botState,
+			})
+			c.broadcastMoveOutcome(gameID, botState.Player2ID, botState, botResult)
+			return
+		}
+
+		if botState.Status == string(game.StatusFinished) && botState.FinishedReason == "stalemate" {
+			c.broadcastJSON(gameID, OutgoingMessage{
+				Type:    "game.state",
+				Payload: botState,
+			})
+			c.broadcastJSON(gameID, OutgoingMessage{
+				Type:    "game.finished",
+				Payload: buildFinishedPayload(gameID, botState),
+			})
+		}
+	})
 }
 
 func (c *Client) handleGameSticker(msg IncomingMessage) {

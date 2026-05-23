@@ -30,6 +30,7 @@ func (c CastlingRights) String() string {
 }
 
 type Undo struct {
+	IsNull         bool
 	Move           Move
 	MovedPiece     Piece
 	CapturedPiece  Piece
@@ -44,14 +45,16 @@ type Undo struct {
 }
 
 type GameState struct {
-	Board          [64]Piece
-	SideToMove     Color
-	CastlingRights CastlingRights
-	CastlingLayout *CastlingLayout
-	EnPassant      Square
-	HalfmoveClock  int
-	FullmoveNumber int
-	History        []Undo
+	Board           [64]Piece
+	SideToMove      Color
+	CastlingRights  CastlingRights
+	CastlingLayout  *CastlingLayout
+	EnPassant       Square
+	HalfmoveClock   int
+	FullmoveNumber  int
+	WhiteKingSquare Square
+	BlackKingSquare Square
+	History         []Undo
 }
 
 func NewInitial() *GameState {
@@ -63,18 +66,20 @@ func NewInitial() *GameState {
 			BlackKingSide:  true,
 			BlackQueenSide: true,
 		},
-		CastlingLayout: StandardCastlingLayout(),
-		EnPassant:      NoSquare,
-		HalfmoveClock:  0,
-		FullmoveNumber: 1,
+		CastlingLayout:  StandardCastlingLayout(),
+		EnPassant:       NoSquare,
+		HalfmoveClock:   0,
+		FullmoveNumber:  1,
+		WhiteKingSquare: NoSquare,
+		BlackKingSquare: NoSquare,
 	}
 
 	backRank := [8]PieceType{Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook}
 	for file := 0; file < 8; file++ {
-		gs.Board[file] = Piece{Type: backRank[file], Color: White}
-		gs.Board[8+file] = Piece{Type: Pawn, Color: White}
-		gs.Board[6*8+file] = Piece{Type: Pawn, Color: Black}
-		gs.Board[7*8+file] = Piece{Type: backRank[file], Color: Black}
+		gs.SetPiece(Square(file), Piece{Type: backRank[file], Color: White})
+		gs.SetPiece(Square(8+file), Piece{Type: Pawn, Color: White})
+		gs.SetPiece(Square(6*8+file), Piece{Type: Pawn, Color: Black})
+		gs.SetPiece(Square(7*8+file), Piece{Type: backRank[file], Color: Black})
 	}
 
 	return gs
@@ -101,7 +106,36 @@ func (g *GameState) SetPiece(sq Square, p Piece) {
 	if sq == NoSquare {
 		return
 	}
+
+	current := g.Board[sq]
+	if current.Type == King {
+		if current.Color == White && g.WhiteKingSquare == sq {
+			g.WhiteKingSquare = NoSquare
+		}
+		if current.Color == Black && g.BlackKingSquare == sq {
+			g.BlackKingSquare = NoSquare
+		}
+	}
+
 	g.Board[sq] = p
+	if p.Type == King {
+		if p.Color == White {
+			g.WhiteKingSquare = sq
+		} else {
+			g.BlackKingSquare = sq
+		}
+	}
+}
+
+func (g *GameState) KingSquare(color Color) (Square, bool) {
+	switch color {
+	case White:
+		return g.WhiteKingSquare, g.WhiteKingSquare != NoSquare
+	case Black:
+		return g.BlackKingSquare, g.BlackKingSquare != NoSquare
+	default:
+		return NoSquare, false
+	}
 }
 
 func (g *GameState) ApplyMove(m Move) error {
@@ -190,6 +224,28 @@ func (g *GameState) ApplyMove(m Move) error {
 	return nil
 }
 
+func (g *GameState) ApplyNullMove() {
+	undo := Undo{
+		IsNull:         true,
+		Move:           NullMove(),
+		PrevEnPassant:  g.EnPassant,
+		PrevCastling:   g.CastlingRights,
+		PrevHalfmove:   g.HalfmoveClock,
+		PrevFullmove:   g.FullmoveNumber,
+		PrevSideToMove: g.SideToMove,
+		CapturedSquare: NoSquare,
+		RookFrom:       NoSquare,
+		RookTo:         NoSquare,
+	}
+
+	g.EnPassant = NoSquare
+	if g.SideToMove == Black {
+		g.FullmoveNumber++
+	}
+	g.SideToMove = g.SideToMove.Opponent()
+	g.History = append(g.History, undo)
+}
+
 func (g *GameState) UndoMove() error {
 	if len(g.History) == 0 {
 		return fmt.Errorf("no moves to undo")
@@ -203,6 +259,10 @@ func (g *GameState) UndoMove() error {
 	g.EnPassant = last.PrevEnPassant
 	g.HalfmoveClock = last.PrevHalfmove
 	g.FullmoveNumber = last.PrevFullmove
+
+	if last.IsNull {
+		return nil
+	}
 
 	if last.Move.Kind == MoveCastleKingSide || last.Move.Kind == MoveCastleQueenSide {
 		rook := g.PieceAt(last.RookTo)

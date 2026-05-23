@@ -12,21 +12,61 @@ type MoveOrdering interface {
 
 type DefaultMoveOrdering struct{}
 
-func NewMoveOrdering() MoveOrdering {
+func NewMoveOrdering(rs rules.RuleSet) MoveOrdering {
+	_ = rs
 	return DefaultMoveOrdering{}
 }
 
-func (DefaultMoveOrdering) Order(gs *position.GameState, moves []position.Move, ttMove position.Move) []position.Move {
-	ordered := append([]position.Move(nil), moves...)
+type scoredMove struct {
+	move  position.Move
+	score int
+}
 
-	sort.SliceStable(ordered, func(i, j int) bool {
-		return movePriority(gs, ordered[i], ttMove) > movePriority(gs, ordered[j], ttMove)
+func (e *Engine) orderMoves(gs *position.GameState, moves []position.Move, ttMove position.Move, ply int) []position.Move {
+	scored := make([]scoredMove, 0, len(moves))
+	_ = ply
+
+	for _, mv := range moves {
+		scored = append(scored, scoredMove{
+			move:  mv,
+			score: movePriority(gs, mv, ttMove, nil),
+		})
+	}
+
+	sort.Slice(scored, func(i, j int) bool {
+		return scored[i].score > scored[j].score
 	})
+
+	ordered := make([]position.Move, len(scored))
+	for i := range scored {
+		ordered[i] = scored[i].move
+	}
 
 	return ordered
 }
 
-func movePriority(gs *position.GameState, mv position.Move, ttMove position.Move) int {
+func (o DefaultMoveOrdering) Order(gs *position.GameState, moves []position.Move, ttMove position.Move) []position.Move {
+	scored := make([]scoredMove, 0, len(moves))
+	for _, mv := range moves {
+		scored = append(scored, scoredMove{
+			move:  mv,
+			score: movePriority(gs, mv, ttMove, nil),
+		})
+	}
+
+	sort.Slice(scored, func(i, j int) bool {
+		return scored[i].score > scored[j].score
+	})
+
+	ordered := make([]position.Move, len(scored))
+	for i := range scored {
+		ordered[i] = scored[i].move
+	}
+
+	return ordered
+}
+
+func movePriority(gs *position.GameState, mv position.Move, ttMove position.Move, _ rules.RuleSet) int {
 	score := 0
 
 	if sameMove(mv, ttMove) {
@@ -46,23 +86,11 @@ func movePriority(gs *position.GameState, mv position.Move, ttMove position.Move
 		score += 500
 	}
 
-	if givesCheck(gs, mv) {
-		score += 2500
-	}
-
 	// Mild centralization bonus helps move ordering without changing evaluation.
 	to := mv.To
 	score += 14 - abs(3-to.File()) - abs(3-to.Rank())
 
 	return score
-}
-
-func givesCheck(gs *position.GameState, mv position.Move) bool {
-	next := gs.Clone()
-	if err := next.ApplyMove(mv); err != nil {
-		return false
-	}
-	return rules.NewClassicalRuleSet().IsCheck(next, next.SideToMove)
 }
 
 func capturedPieceForMove(gs *position.GameState, mv position.Move) position.Piece {
@@ -73,6 +101,8 @@ func capturedPieceForMove(gs *position.GameState, mv position.Move) position.Pie
 			return gs.PieceAt(position.MustSquare(mv.To.File(), mv.To.Rank()-1))
 		}
 		return gs.PieceAt(position.MustSquare(mv.To.File(), mv.To.Rank()+1))
+	case position.MoveCastleKingSide, position.MoveCastleQueenSide:
+		return position.Piece{}
 	default:
 		return gs.PieceAt(mv.To)
 	}

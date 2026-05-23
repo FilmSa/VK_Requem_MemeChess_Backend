@@ -33,6 +33,13 @@ func abs(x int) int {
 	return x
 }
 
+func isTacticalMove(gs *position.GameState, mv position.Move) bool {
+	if mv.Kind == position.MovePromotion || mv.Kind == position.MoveEnPassant {
+		return true
+	}
+	return !capturedPieceForMove(gs, mv).IsZero()
+}
+
 func attackers(gs *position.GameState, target position.Square, color position.Color) []position.Square {
 	out := make([]position.Square, 0, 4)
 	for i := 0; i < 64; i++ {

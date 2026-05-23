@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"meme_chess/internal/auth"
+	"meme_chess/internal/inventory"
 	"meme_chess/internal/user"
 )
 
@@ -17,6 +18,7 @@ type HTTP struct {
 	JWT               *auth.JWTManager
 	AuthService       *auth.Service
 	UserRepo          *user.Repository
+	InventoryService  *inventory.Service
 	JoinBase          string // e.g. http://localhost:5173
 	BroadcastState    func(string, State)
 	BroadcastFinished func(string, State)
@@ -53,10 +55,11 @@ type inviteCreateRequest struct {
 }
 
 type inviteParticipant struct {
-	ID        string  `json:"id"`
-	Username  string  `json:"username"`
-	AvatarURL *string `json:"avatar_url,omitempty"`
-	IsGuest   bool    `json:"is_guest"`
+	ID            string  `json:"id"`
+	Username      string  `json:"username"`
+	AvatarURL     *string `json:"avatar_url,omitempty"`
+	PieceSkinSlug *string `json:"piece_skin_slug,omitempty"`
+	IsGuest       bool    `json:"is_guest"`
 }
 
 type inviteJoinResponse struct {
@@ -803,10 +806,12 @@ func buildInviteParticipant(u *user.User) inviteParticipant {
 }
 
 func buildBotParticipant() inviteParticipant {
+	defaultPieceSkin := "piece.classic"
 	return inviteParticipant{
-		ID:       botUserID,
-		Username: botDisplayName(),
-		IsGuest:  false,
+		ID:            botUserID,
+		Username:      botDisplayName(),
+		PieceSkinSlug: &defaultPieceSkin,
+		IsGuest:       false,
 	}
 }
 
@@ -824,5 +829,14 @@ func (h *HTTP) loadParticipant(r *http.Request, userID string) (*inviteParticipa
 	}
 
 	profile := buildInviteParticipant(u)
+	if h.InventoryService != nil {
+		selection, err := h.InventoryService.GetSelection(r.Context(), userID)
+		if err != nil && !errors.Is(err, inventory.ErrNotFound) {
+			return nil, err
+		}
+		if err == nil {
+			profile.PieceSkinSlug = selection.PieceSkinSlug
+		}
+	}
 	return &profile, nil
 }

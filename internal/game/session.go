@@ -1,6 +1,7 @@
 package game
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,14 +15,16 @@ const (
 )
 
 type Move struct {
-	Number      int          `json:"number"`
-	UserID      string       `json:"user_id"`
-	Move        string       `json:"move"`
-	FEN         string       `json:"fen"`
-	IsCapture   bool         `json:"is_capture"`
-	IsCheck     bool         `json:"is_check"`
-	IsCheckmate bool         `json:"is_checkmate"`
-	Effects     []MoveEffect `json:"effects,omitempty"`
+	Number       int          `json:"number"`
+	UserID       string       `json:"user_id"`
+	Move         string       `json:"move"`
+	FEN          string       `json:"fen"`
+	IsCapture    bool         `json:"is_capture"`
+	IsCheck      bool         `json:"is_check"`
+	IsCheckmate  bool         `json:"is_checkmate"`
+	MemeID       string       `json:"meme_id,omitempty"`
+	MemeCategory string       `json:"meme_category,omitempty"`
+	Effects      []MoveEffect `json:"effects,omitempty"`
 }
 
 type Session struct {
@@ -549,6 +552,18 @@ func cloneMoves(in []Move) []Move {
 		out[i].Effects = cloneEffects(in[i].Effects)
 	}
 	return out
+}
+
+func (s *Session) SetMoveMeme(moveNumber int, memeID string, category string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if moveNumber < 1 || moveNumber > len(s.Moves) {
+		return
+	}
+
+	s.Moves[moveNumber-1].MemeID = strings.TrimSpace(memeID)
+	s.Moves[moveNumber-1].MemeCategory = strings.TrimSpace(category)
 }
 
 func (s *Session) FinishDraw(reason string) State {

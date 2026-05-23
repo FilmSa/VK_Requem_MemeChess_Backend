@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS moves (
     is_capture boolean NOT NULL DEFAULT false,
     is_check boolean NOT NULL DEFAULT false,
     is_checkmate boolean NOT NULL DEFAULT false,
+    meme_id text NULL,
+    meme_category text NULL,
     created_at timestamp NOT NULL DEFAULT now()
     );
 

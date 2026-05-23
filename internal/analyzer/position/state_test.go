@@ -51,6 +51,64 @@ func TestUndoMove(t *testing.T) {
 	}
 }
 
+func TestUndoMoveAfterCastling(t *testing.T) {
+	gs := NewInitial()
+	for _, raw := range []string{"g1f3", "g8f6", "f1c4", "b8c6"} {
+		mv, err := ParseUCIMove(gs, raw)
+		if err != nil {
+			t.Fatalf("parse move %s: %v", raw, err)
+		}
+		if err := gs.ApplyMove(mv); err != nil {
+			t.Fatalf("apply move %s: %v", raw, err)
+		}
+	}
+
+	before := gs.FEN()
+	castle, err := ParseUCIMove(gs, "e1g1")
+	if err != nil {
+		t.Fatalf("parse castle: %v", err)
+	}
+	if err := gs.ApplyMove(castle); err != nil {
+		t.Fatalf("apply castle: %v", err)
+	}
+	if err := gs.UndoMove(); err != nil {
+		t.Fatalf("undo castle: %v", err)
+	}
+
+	after := gs.FEN()
+	if before != after {
+		t.Fatalf("state mismatch after castling undo\nwant: %s\ngot:  %s", before, after)
+	}
+}
+
+func TestUndoMoveAfterCastlingSequence(t *testing.T) {
+	gs := NewInitial()
+	for _, raw := range []string{
+		"f2f3", "e7e5", "g2g4", "b8c6",
+		"g1h3", "g8f6", "f1g2", "f8c5",
+		"e1g1", "e8g8",
+	} {
+		mv, err := ParseUCIMove(gs, raw)
+		if err != nil {
+			t.Fatalf("parse move %s: %v", raw, err)
+		}
+		if err := gs.ApplyMove(mv); err != nil {
+			t.Fatalf("apply move %s: %v", raw, err)
+		}
+	}
+
+	for i := 0; i < 10; i++ {
+		if err := gs.UndoMove(); err != nil {
+			t.Fatalf("undo step %d: %v", i, err)
+		}
+	}
+
+	want := NewInitial().FEN()
+	if got := gs.FEN(); got != want {
+		t.Fatalf("state mismatch after castling sequence undo\nwant: %s\ngot:  %s", want, got)
+	}
+}
+
 func TestHashStableForEqualPositions(t *testing.T) {
 	gs1 := NewInitial()
 	gs2 := NewInitial()

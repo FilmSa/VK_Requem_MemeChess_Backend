@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"meme_chess/internal/analyzer/analysis"
+	"meme_chess/internal/analyzer/pattern"
 )
 
 type stubMoveAnalyzer struct {
@@ -71,5 +72,45 @@ func TestService_AnalyzeMoveUsesMoveAnalyzer(t *testing.T) {
 	}
 	if result == nil || result.Move != "e2e4" {
 		t.Fatalf("expected analyzer result for e2e4, got %+v", result)
+	}
+}
+
+func TestService_MakeMoveDecoratesMoveWithStableMeme(t *testing.T) {
+	svc := newTestServiceWithGame()
+	stub := &stubMoveAnalyzer{
+		result: &analysis.Result{
+			Move:    "e2e4",
+			Quality: "best",
+			Depth:   3,
+			Tags:    []pattern.Tag{pattern.TagCheck},
+		},
+	}
+	svc.SetMoveAnalyzer(stub)
+
+	activateGame(t, svc)
+
+	state, result, err := svc.MakeMove(context.Background(), "game-123", "user1", "e2e4")
+	if err != nil {
+		t.Fatalf("make move: %v", err)
+	}
+
+	if result.MemeID == "" {
+		t.Fatal("expected meme id to be assigned")
+	}
+	if result.MemeCategory != memeCategoryCheck {
+		t.Fatalf("expected meme category %q, got %q", memeCategoryCheck, result.MemeCategory)
+	}
+	if len(state.Moves) != 1 {
+		t.Fatalf("expected one stored move, got %d", len(state.Moves))
+	}
+	if state.Moves[0].MemeID != result.MemeID {
+		t.Fatalf("expected stored meme id %q, got %q", result.MemeID, state.Moves[0].MemeID)
+	}
+	if state.Moves[0].MemeCategory != result.MemeCategory {
+		t.Fatalf(
+			"expected stored meme category %q, got %q",
+			result.MemeCategory,
+			state.Moves[0].MemeCategory,
+		)
 	}
 }

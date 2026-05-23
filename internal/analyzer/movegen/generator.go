@@ -9,16 +9,54 @@ type Generator struct {
 	rules rules.RuleSet
 }
 
+var (
+	knightDeltas = [8][2]int{
+		{1, 2}, {2, 1}, {-1, 2}, {-2, 1},
+		{1, -2}, {2, -1}, {-1, -2}, {-2, -1},
+	}
+	bishopDirs = [4][2]int{
+		{1, 1}, {1, -1}, {-1, 1}, {-1, -1},
+	}
+	rookDirs = [4][2]int{
+		{1, 0}, {-1, 0}, {0, 1}, {0, -1},
+	}
+	queenDirs = [8][2]int{
+		{1, 1}, {1, -1}, {-1, 1}, {-1, -1},
+		{1, 0}, {-1, 0}, {0, 1}, {0, -1},
+	}
+)
+
 func NewGenerator(rs rules.RuleSet) *Generator {
 	return &Generator{rules: rs}
 }
 
+func (g *Generator) GeneratePseudoMoves(gs *position.GameState) []position.Move {
+	return generatePseudoMoves(gs)
+}
+
 func (g *Generator) GenerateLegalMoves(gs *position.GameState) []position.Move {
-	pseudo := generatePseudoMoves(gs)
+	pseudo := g.GeneratePseudoMoves(gs)
 	legal := make([]position.Move, 0, len(pseudo))
+	movingSide := gs.SideToMove
 
 	for _, mv := range pseudo {
-		if err := g.rules.IsLegalMove(gs, mv); err == nil {
+		if mv.Kind == position.MoveCastleKingSide || mv.Kind == position.MoveCastleQueenSide {
+			if err := g.rules.IsLegalMove(gs, mv); err == nil {
+				legal = append(legal, mv)
+			}
+			continue
+		}
+
+		if err := gs.ApplyMove(mv); err != nil {
+			continue
+		}
+
+		inCheck := g.rules.IsCheck(gs, movingSide)
+		if err := gs.UndoMove(); err != nil {
+			panic(err)
+		}
+
+		if !inCheck {
 			legal = append(legal, mv)
 		}
 	}
@@ -38,33 +76,24 @@ func generatePseudoMoves(gs *position.GameState) []position.Move {
 
 		switch piece.Type {
 		case position.Pawn:
-			moves = append(moves, genPawnMoves(gs, from, piece.Color)...)
+			moves = genPawnMoves(moves, gs, from, piece.Color)
 		case position.Knight:
-			moves = append(moves, genKnightMoves(gs, from)...)
+			moves = genKnightMoves(moves, gs, from)
 		case position.Bishop:
-			moves = append(moves, genSlidingMoves(gs, from, [][2]int{
-				{1, 1}, {1, -1}, {-1, 1}, {-1, -1},
-			})...)
+			moves = genSlidingMoves(moves, gs, from, bishopDirs[:])
 		case position.Rook:
-			moves = append(moves, genSlidingMoves(gs, from, [][2]int{
-				{1, 0}, {-1, 0}, {0, 1}, {0, -1},
-			})...)
+			moves = genSlidingMoves(moves, gs, from, rookDirs[:])
 		case position.Queen:
-			moves = append(moves, genSlidingMoves(gs, from, [][2]int{
-				{1, 1}, {1, -1}, {-1, 1}, {-1, -1},
-				{1, 0}, {-1, 0}, {0, 1}, {0, -1},
-			})...)
+			moves = genSlidingMoves(moves, gs, from, queenDirs[:])
 		case position.King:
-			moves = append(moves, genKingMoves(gs, from, piece.Color)...)
+			moves = genKingMoves(moves, gs, from, piece.Color)
 		}
 	}
 
 	return moves
 }
 
-func genPawnMoves(gs *position.GameState, from position.Square, color position.Color) []position.Move {
-	moves := make([]position.Move, 0, 8)
-
+func genPawnMoves(moves []position.Move, gs *position.GameState, from position.Square, color position.Color) []position.Move {
 	file := from.File()
 	rank := from.Rank()
 
@@ -148,16 +177,10 @@ func appendPromotionMoves(moves []position.Move, from, to position.Square) []pos
 	return moves
 }
 
-func genKnightMoves(gs *position.GameState, from position.Square) []position.Move {
-	moves := make([]position.Move, 0, 8)
-	deltas := [][2]int{
-		{1, 2}, {2, 1}, {-1, 2}, {-2, 1},
-		{1, -2}, {2, -1}, {-1, -2}, {-2, -1},
-	}
-
+func genKnightMoves(moves []position.Move, gs *position.GameState, from position.Square) []position.Move {
 	src := gs.PieceAt(from)
 
-	for _, d := range deltas {
+	for _, d := range knightDeltas {
 		f := from.File() + d[0]
 		r := from.Rank() + d[1]
 		if f < 0 || f > 7 || r < 0 || r > 7 {
@@ -174,8 +197,7 @@ func genKnightMoves(gs *position.GameState, from position.Square) []position.Mov
 	return moves
 }
 
-func genSlidingMoves(gs *position.GameState, from position.Square, dirs [][2]int) []position.Move {
-	moves := make([]position.Move, 0, 16)
+func genSlidingMoves(moves []position.Move, gs *position.GameState, from position.Square, dirs [][2]int) []position.Move {
 	src := gs.PieceAt(from)
 
 	for _, d := range dirs {
@@ -203,8 +225,7 @@ func genSlidingMoves(gs *position.GameState, from position.Square, dirs [][2]int
 	return moves
 }
 
-func genKingMoves(gs *position.GameState, from position.Square, color position.Color) []position.Move {
-	moves := make([]position.Move, 0, 10)
+func genKingMoves(moves []position.Move, gs *position.GameState, from position.Square, color position.Color) []position.Move {
 	src := gs.PieceAt(from)
 
 	for df := -1; df <= 1; df++ {

@@ -109,6 +109,7 @@ func main() {
 		JWT:               jwtManager,
 		AuthService:       authService,
 		UserRepo:          userRepo,
+		InventoryService:  invService,
 		JoinBase:          cfg.FrontendJoinBase,
 		BroadcastState:    hub.BroadcastGameState,
 		BroadcastFinished: hub.BroadcastGameFinished,

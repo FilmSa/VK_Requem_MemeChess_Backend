@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"meme_chess/internal/game"
 )
@@ -146,6 +147,148 @@ func TestBroadcastMoveOutcomeIncludesEvolutionEffects(t *testing.T) {
 	effects, ok := payload["effects"].([]any)
 	if !ok || len(effects) != 1 {
 		t.Fatalf("expected 1 effect in payload, got %#v", payload["effects"])
+	}
+}
+
+func TestHandleGameMoveDelaysBotResponse(t *testing.T) {
+	hub := NewHub()
+	svc := game.NewService(nil)
+
+	gameID, err := svc.CreateBotGame(context.Background(), "player-1", game.GameModeClassic, "medium")
+	if err != nil {
+		t.Fatalf("create bot game: %v", err)
+	}
+	if _, err := svc.JoinGame(context.Background(), gameID, "player-1"); err != nil {
+		t.Fatalf("join bot game: %v", err)
+	}
+
+	var (
+		scheduledDelay time.Duration
+		scheduledFn    func()
+	)
+
+	client := &Client{
+		hub:         hub,
+		gameService: svc,
+		send:        make(chan []byte, 4),
+		userID:      "player-1",
+		gameIDs:     map[string]struct{}{gameID: {}},
+		botDelay:    botMoveDelay,
+		afterFunc: func(delay time.Duration, fn func()) *time.Timer {
+			scheduledDelay = delay
+			scheduledFn = fn
+			return nil
+		},
+	}
+
+	client.handleIncomingMessage(IncomingMessage{
+		Type:      "game.move",
+		RequestID: "req-bot-delay",
+		Payload: mustRawMessage(t, GameMovePayload{
+			GameID: gameID,
+			Move:   "e2e4",
+		}),
+	})
+
+	accepted := mustOutgoingMessage(t, <-client.send)
+	if accepted.Type != "game.move.accepted" {
+		t.Fatalf("expected move acceptance, got %s", accepted.Type)
+	}
+
+	if scheduledDelay != 4*time.Second {
+		t.Fatalf("expected bot move to be delayed by 4s, got %s", scheduledDelay)
+	}
+	if scheduledFn == nil {
+		t.Fatal("expected bot move callback to be scheduled")
+	}
+
+	firstBroadcast := mustOutgoingMessage(t, (<-hub.broadcast).Payload)
+	if firstBroadcast.Type != "game.state" {
+		t.Fatalf("expected first broadcast to be game.state, got %s", firstBroadcast.Type)
+	}
+
+	select {
+	case msg := <-hub.broadcast:
+		unexpected := mustOutgoingMessage(t, msg.Payload)
+		t.Fatalf("expected no bot broadcast before delayed callback, got %s", unexpected.Type)
+	default:
+	}
+
+	scheduledFn()
+
+	secondBroadcast := mustOutgoingMessage(t, (<-hub.broadcast).Payload)
+	if secondBroadcast.Type != "game.state" {
+		t.Fatalf("expected delayed bot response to broadcast game.state, got %s", secondBroadcast.Type)
+	}
+
+	payload, ok := secondBroadcast.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("expected state payload object, got %T", secondBroadcast.Payload)
+	}
+	moves, ok := payload["moves"].([]any)
+	if !ok || len(moves) != 2 {
+		t.Fatalf("expected two moves after delayed bot turn, got %#v", payload["moves"])
+	}
+}
+
+func TestHandleJoinGameSchedulesBotResponseWhenBotTurnPending(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	svc := game.NewService(nil)
+
+	gameID, err := svc.CreateBotGame(context.Background(), "player-1", game.GameModeClassic, "medium")
+	if err != nil {
+		t.Fatalf("create bot game: %v", err)
+	}
+	if _, err := svc.JoinGame(context.Background(), gameID, "player-1"); err != nil {
+		t.Fatalf("initial join bot game: %v", err)
+	}
+	state, _, err := svc.MakeMove(context.Background(), gameID, "player-1", "e2e4")
+	if err != nil {
+		t.Fatalf("make human move: %v", err)
+	}
+	if state.CurrentTurnUserID != state.Player2ID {
+		t.Fatalf("expected bot turn to be pending, got current_turn_user_id=%q player2_id=%q", state.CurrentTurnUserID, state.Player2ID)
+	}
+
+	var (
+		scheduledDelay time.Duration
+		scheduledFn    func()
+	)
+
+	client := &Client{
+		hub:         hub,
+		gameService: svc,
+		send:        make(chan []byte, 8),
+		userID:      "player-1",
+		gameIDs:     make(map[string]struct{}),
+		botDelay:    botMoveDelay,
+		afterFunc: func(delay time.Duration, fn func()) *time.Timer {
+			scheduledDelay = delay
+			scheduledFn = fn
+			return nil
+		},
+	}
+
+	client.handleJoinGame(IncomingMessage{
+		Type:      "game.join",
+		RequestID: "req-bot-rejoin",
+		Payload: mustRawMessage(t, JoinGamePayload{
+			GameID: gameID,
+		}),
+	})
+
+	joined := mustOutgoingMessage(t, <-client.send)
+	if joined.Type != "game.joined" {
+		t.Fatalf("expected join reply, got %s", joined.Type)
+	}
+
+	if scheduledDelay != 4*time.Second {
+		t.Fatalf("expected bot move to be delayed by 4s after rejoin, got %s", scheduledDelay)
+	}
+	if scheduledFn == nil {
+		t.Fatal("expected bot move callback to be scheduled after rejoin")
 	}
 }
 
