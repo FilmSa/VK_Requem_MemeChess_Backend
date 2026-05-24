@@ -7,6 +7,7 @@ import (
 
 	"meme_chess/internal/analyzer/analysis"
 	"meme_chess/internal/analyzer/pattern"
+	"meme_chess/internal/analyzer/position"
 )
 
 const (
@@ -125,15 +126,72 @@ func normalizeMemeCategory(category string) string {
 	return memeCategoryDevelopment
 }
 
+func isKnownMemeCategory(category string) bool {
+	normalized := strings.TrimSpace(strings.ToUpper(category))
+	_, ok := memeCatalogByCategory[normalized]
+	return ok
+}
+
+func isKnownMemeID(id string) bool {
+	normalized := strings.TrimSpace(id)
+	if normalized == "" {
+		return false
+	}
+	_, ok := memeCatalogByID[normalized]
+	return ok
+}
+
+func isKnownMemeAssignment(id string, category string) bool {
+	normalizedID := strings.TrimSpace(id)
+	normalizedCategory := strings.TrimSpace(strings.ToUpper(category))
+	if normalizedID == "" || normalizedCategory == "" {
+		return false
+	}
+
+	definitions, ok := memeCatalogByCategory[normalizedCategory]
+	if !ok {
+		return false
+	}
+
+	for _, definition := range definitions {
+		if definition.ID == normalizedID {
+			return true
+		}
+	}
+
+	return false
+}
+
 func classifyMoveMemeCategory(gameMode string, result MoveResult, analysisResult *analysis.Result) string {
+	return classifyMoveMemeCategoryWithClassicPosition(gameMode, result, analysisResult, nil)
+}
+
+func classifyMoveMemeCategoryWithClassicPosition(
+	gameMode string,
+	result MoveResult,
+	analysisResult *analysis.Result,
+	classicPosition *position.GameState,
+) string {
 	mode := normalizeGameMode(gameMode)
 	if mode == GameModeClassic || mode == GameModeMeme {
-		return classifyClassicMoveMemeCategory(result, analysisResult)
+		return classifyClassicMoveMemeCategoryWithPosition(result, analysisResult, classicPosition)
 	}
 	return classifyFallbackMoveMemeCategory(result)
 }
 
 func classifyClassicMoveMemeCategory(result MoveResult, analysisResult *analysis.Result) string {
+	return classifyClassicMoveMemeCategoryWithPosition(result, analysisResult, nil)
+}
+
+func classifyClassicMoveMemeCategoryWithPosition(
+	result MoveResult,
+	analysisResult *analysis.Result,
+	classicPosition *position.GameState,
+) string {
+	if detectsClassicSacrifice(classicPosition) {
+		return memeCategorySacrifice
+	}
+
 	if analysisResult != nil {
 		if result.IsCheck || hasAnyTag(
 			analysisResult.Tags,
@@ -154,16 +212,6 @@ func classifyClassicMoveMemeCategory(result MoveResult, analysisResult *analysis
 		) {
 			return memeCategoryForkPin
 		}
-		if hasAnyTag(
-			analysisResult.Tags,
-			pattern.TagBlunder,
-			pattern.TagMistake,
-			pattern.TagInaccuracy,
-			pattern.TagHangingPiece,
-			pattern.TagMissedOpportunity,
-		) || isPoorMoveQuality(analysisResult.Quality) {
-			return memeCategorySacrifice
-		}
 		if result.IsCapture && (hasAnyTag(analysisResult.Tags, pattern.TagWinMaterial, pattern.TagConversion) ||
 			isSolidMoveQuality(analysisResult.Quality)) {
 			return memeCategoryImportantCapture
@@ -181,15 +229,6 @@ func classifyFallbackMoveMemeCategory(result MoveResult) string {
 		return memeCategoryImportantCapture
 	default:
 		return memeCategoryDevelopment
-	}
-}
-
-func isPoorMoveQuality(quality string) bool {
-	switch strings.TrimSpace(strings.ToLower(quality)) {
-	case "blunder", "mistake", "inaccuracy":
-		return true
-	default:
-		return false
 	}
 }
 

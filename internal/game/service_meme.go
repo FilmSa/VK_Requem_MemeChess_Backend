@@ -9,11 +9,12 @@ func (s *Service) decorateMoveWithMeme(gameID string, session *Session, state St
 	}
 
 	analysisResult := s.lookupMemeAnalysis(gameID, session, state.GameMode, result.Move, moveNumber)
+	classicPosition := currentClassicPositionFromSession(session)
 	assignment := selectMoveMeme(
 		gameID,
 		result.Move,
 		moveNumber,
-		classifyMoveMemeCategory(state.GameMode, result, analysisResult),
+		classifyMoveMemeCategoryWithClassicPosition(state.GameMode, result, analysisResult, classicPosition),
 		state.Moves,
 	)
 	if assignment.ID == "" {

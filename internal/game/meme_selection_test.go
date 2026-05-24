@@ -5,6 +5,7 @@ import (
 
 	"meme_chess/internal/analyzer/analysis"
 	"meme_chess/internal/analyzer/pattern"
+	"meme_chess/internal/analyzer/position"
 )
 
 func TestSelectMoveMemeIsDeterministic(t *testing.T) {
@@ -77,5 +78,98 @@ func TestClassifyClassicMoveMemeCategoryPrefersCheckOverCapture(t *testing.T) {
 
 	if category != memeCategoryCheck {
 		t.Fatalf("expected %q, got %q", memeCategoryCheck, category)
+	}
+}
+
+func TestClassifyClassicMoveMemeCategoryPrefersRuntimeSacrificeOverCheck(t *testing.T) {
+	state, err := position.BuildGameStateFromUCIMoves([]string{
+		"e2e4",
+		"e7e5",
+		"f1c4",
+		"b8c6",
+		"c4f7",
+	})
+	if err != nil {
+		t.Fatalf("build game state: %v", err)
+	}
+
+	category := classifyClassicMoveMemeCategoryWithPosition(
+		MoveResult{IsCapture: true, IsCheck: true},
+		nil,
+		state,
+	)
+
+	if category != memeCategorySacrifice {
+		t.Fatalf("expected %q, got %q", memeCategorySacrifice, category)
+	}
+}
+
+func TestClassifyClassicMoveMemeCategoryDoesNotTreatDefendedCheckAsSacrifice(t *testing.T) {
+	state, err := position.BuildGameStateFromUCIMoves([]string{
+		"e2e4",
+		"e7e5",
+		"d1h5",
+		"b8c6",
+		"f1c4",
+		"g8f6",
+		"h5f7",
+	})
+	if err != nil {
+		t.Fatalf("build game state: %v", err)
+	}
+
+	category := classifyClassicMoveMemeCategoryWithPosition(
+		MoveResult{IsCapture: true, IsCheck: true},
+		nil,
+		state,
+	)
+
+	if category != memeCategoryCheck {
+		t.Fatalf("expected %q, got %q", memeCategoryCheck, category)
+	}
+}
+
+func TestClassifyClassicMoveMemeCategoryDoesNotTreatDefendedMaterialGainAsSacrifice(t *testing.T) {
+	state, err := position.BuildGameStateFromUCIMoves([]string{
+		"e2e4",
+		"e7e5",
+		"d2d4",
+		"e5d4",
+		"g1f3",
+		"b8c6",
+		"f3d4",
+	})
+	if err != nil {
+		t.Fatalf("build game state: %v", err)
+	}
+
+	category := classifyClassicMoveMemeCategoryWithPosition(
+		MoveResult{IsCapture: true},
+		nil,
+		state,
+	)
+
+	if category != memeCategoryImportantCapture {
+		t.Fatalf("expected %q, got %q", memeCategoryImportantCapture, category)
+	}
+}
+
+func TestNeedsStoredMoveMemeBackfill(t *testing.T) {
+	if !needsStoredMoveMemeBackfill(memeAssignment{}) {
+		t.Fatal("expected empty assignment to require backfill")
+	}
+
+	if needsStoredMoveMemeBackfill(memeAssignment{
+		ID:       memeCatalogByCategory[memeCategoryDevelopment][0].ID,
+		Category: memeCategoryDevelopment,
+	}) {
+		t.Fatal("expected known meme assignment to be preserved")
+	}
+
+	if !needsStoredMoveMemeBackfill(memeAssignment{
+		ID:       memeCatalogByCategory[memeCategoryDevelopment][0].ID,
+		Category: memeCategoryCheck,
+	}) {
+		t.Fatal("expected mismatched meme id/category pair to require backfill")
 	}
 }

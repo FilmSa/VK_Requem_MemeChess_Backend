@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -119,6 +120,11 @@ func main() {
 		log.Fatalf("failed to initialize analyzer: %v", err)
 	}
 	gameService.SetMoveAnalyzer(gameAnalyzer)
+	if updated, err := gameService.BackfillStoredMoveMemes(context.Background()); err != nil {
+		log.Printf("failed to backfill move memes: %v", err)
+	} else if updated > 0 {
+		log.Printf("backfilled %d move memes", updated)
+	}
 
 	go hub.Run()
 

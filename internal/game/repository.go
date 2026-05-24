@@ -383,6 +383,19 @@ type GameParticipantsRow struct {
 	Player2AvatarURL *string
 }
 
+type MoveMemeBackfillRow struct {
+	GameID       string
+	GameMode     string
+	MoveNumber   int
+	Move         string
+	FEN          string
+	IsCapture    bool
+	IsCheck      bool
+	IsCheckmate  bool
+	MemeID       string
+	MemeCategory string
+}
+
 func (r *Repository) ListUserGames(ctx context.Context, userID string, limit, offset int) ([]UserGameListRow, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -503,4 +516,95 @@ func (r *Repository) GetGameParticipants(ctx context.Context, gameID string) (*G
 	}
 
 	return &row, nil
+}
+
+func (r *Repository) ListMovesForMemeBackfill(ctx context.Context) ([]MoveMemeBackfillRow, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	const q = `
+		WITH affected_games AS (
+			SELECT DISTINCT m.game_id
+			FROM moves m
+			INNER JOIN games g ON g.id = m.game_id
+			WHERE g.game_mode IN ('classic', 'meme')
+			  AND (
+				COALESCE(m.meme_id, '') = ''
+				OR COALESCE(m.meme_category, '') = ''
+			  )
+		)
+		SELECT
+			m.game_id::text,
+			g.game_mode,
+			m.move_number,
+			m.move,
+			m.fen,
+			m.is_capture,
+			m.is_check,
+			m.is_checkmate,
+			COALESCE(m.meme_id, ''),
+			COALESCE(m.meme_category, '')
+		FROM moves m
+		INNER JOIN games g ON g.id = m.game_id
+		INNER JOIN affected_games a ON a.game_id = m.game_id
+		ORDER BY m.game_id, m.move_number
+	`
+
+	rows, err := r.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("list moves for meme backfill: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]MoveMemeBackfillRow, 0, 128)
+	for rows.Next() {
+		var row MoveMemeBackfillRow
+		if err := rows.Scan(
+			&row.GameID,
+			&row.GameMode,
+			&row.MoveNumber,
+			&row.Move,
+			&row.FEN,
+			&row.IsCapture,
+			&row.IsCheck,
+			&row.IsCheckmate,
+			&row.MemeID,
+			&row.MemeCategory,
+		); err != nil {
+			return nil, fmt.Errorf("scan moves for meme backfill: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list moves for meme backfill rows: %w", err)
+	}
+
+	return out, nil
+}
+
+func (r *Repository) UpdateMoveMeme(ctx context.Context, gameID string, moveNumber int, memeID, memeCategory string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	const q = `
+		UPDATE moves
+		SET
+			meme_id = $3,
+			meme_category = $4
+		WHERE game_id = $1 AND move_number = $2
+	`
+
+	_, err := r.pool.Exec(
+		ctx,
+		q,
+		gameID,
+		moveNumber,
+		strings.TrimSpace(memeID),
+		strings.TrimSpace(memeCategory),
+	)
+	if err != nil {
+		return fmt.Errorf("update move meme: %w", err)
+	}
+
+	return nil
 }

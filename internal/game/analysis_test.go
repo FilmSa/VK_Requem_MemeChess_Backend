@@ -114,3 +114,85 @@ func TestService_MakeMoveDecoratesMoveWithStableMeme(t *testing.T) {
 		)
 	}
 }
+
+func TestService_MakeMoveDetectsRuntimeMaterialLossSacrificeWithoutAnalyzer(t *testing.T) {
+	svc := newTestServiceWithGame()
+	activateGame(t, svc)
+
+	moves := []struct {
+		user string
+		move string
+	}{
+		{user: "user1", move: "e2e4"},
+		{user: "user2", move: "e7e5"},
+		{user: "user1", move: "f1c4"},
+		{user: "user2", move: "b8c6"},
+	}
+
+	for _, item := range moves {
+		if _, _, err := svc.MakeMove(context.Background(), "game-123", item.user, item.move); err != nil {
+			t.Fatalf("make move %s: %v", item.move, err)
+		}
+	}
+
+	state, result, err := svc.MakeMove(context.Background(), "game-123", "user1", "c4f7")
+	if err != nil {
+		t.Fatalf("make sacrifice move: %v", err)
+	}
+
+	if result.MemeCategory != memeCategorySacrifice {
+		t.Fatalf("expected runtime sacrifice category %q, got %q", memeCategorySacrifice, result.MemeCategory)
+	}
+	if len(state.Moves) == 0 {
+		t.Fatal("expected stored moves after sacrifice")
+	}
+	if state.Moves[len(state.Moves)-1].MemeCategory != memeCategorySacrifice {
+		t.Fatalf(
+			"expected stored meme category %q, got %q",
+			memeCategorySacrifice,
+			state.Moves[len(state.Moves)-1].MemeCategory,
+		)
+	}
+}
+
+func TestService_MakeMoveDoesNotTreatDefendedCheckAsSacrifice(t *testing.T) {
+	svc := newTestServiceWithGame()
+	activateGame(t, svc)
+
+	moves := []struct {
+		user string
+		move string
+	}{
+		{user: "user1", move: "e2e4"},
+		{user: "user2", move: "e7e5"},
+		{user: "user1", move: "d1h5"},
+		{user: "user2", move: "b8c6"},
+		{user: "user1", move: "f1c4"},
+		{user: "user2", move: "g8f6"},
+	}
+
+	for _, item := range moves {
+		if _, _, err := svc.MakeMove(context.Background(), "game-123", item.user, item.move); err != nil {
+			t.Fatalf("make move %s: %v", item.move, err)
+		}
+	}
+
+	state, result, err := svc.MakeMove(context.Background(), "game-123", "user1", "h5f7")
+	if err != nil {
+		t.Fatalf("make defended check move: %v", err)
+	}
+
+	if result.MemeCategory != memeCategoryCheck {
+		t.Fatalf("expected defended check category %q, got %q", memeCategoryCheck, result.MemeCategory)
+	}
+	if len(state.Moves) == 0 {
+		t.Fatal("expected stored moves after defended check")
+	}
+	if state.Moves[len(state.Moves)-1].MemeCategory != memeCategoryCheck {
+		t.Fatalf(
+			"expected stored meme category %q, got %q",
+			memeCategoryCheck,
+			state.Moves[len(state.Moves)-1].MemeCategory,
+		)
+	}
+}
