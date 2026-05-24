@@ -318,6 +318,25 @@ func (s *Session) ApplyMove(userID, move string) (State, MoveResult, error) {
 		s.Status = StatusFinished
 		s.WinnerID = userID
 		s.FinishedReason = "checkmate"
+		s.CurrentTurnUserID = ""
+		s.CurrentTurnStartedAt = time.Time{}
+	} else if len(s.legalMovesLocked()) == 0 {
+		s.Status = StatusFinished
+		s.WinnerID = ""
+		s.FinishedReason = "stalemate"
+		s.CurrentTurnUserID = ""
+		s.CurrentTurnStartedAt = time.Time{}
+	} else if hasThreefoldRepetition(s.InitialFEN, s.Moves) {
+		s.Status = StatusFinished
+		s.WinnerID = ""
+		s.FinishedReason = "threefold_repetition"
+		s.CurrentTurnUserID = ""
+		s.CurrentTurnStartedAt = time.Time{}
+	} else if isInsufficientMaterialFEN(s.FEN) {
+		s.Status = StatusFinished
+		s.WinnerID = ""
+		s.FinishedReason = "insufficient_material"
+		s.CurrentTurnUserID = ""
 		s.CurrentTurnStartedAt = time.Time{}
 	} else {
 		if s.CurrentTurnUserID == s.Player1ID {
@@ -539,6 +558,109 @@ func lastMoveEffects(moves []Move) []MoveEffect {
 		return nil
 	}
 	return moves[len(moves)-1].Effects
+}
+
+func hasThreefoldRepetition(initialFEN string, moves []Move) bool {
+	if len(moves) == 0 {
+		return false
+	}
+
+	target := normalizeFENForRepetition(moves[len(moves)-1].FEN)
+	if target == "" {
+		return false
+	}
+
+	count := 0
+	if normalizeFENForRepetition(initialFEN) == target {
+		count++
+	}
+
+	for _, move := range moves {
+		if normalizeFENForRepetition(move.FEN) == target {
+			count++
+		}
+	}
+
+	return count >= 3
+}
+
+func normalizeFENForRepetition(fen string) string {
+	fields := strings.Fields(strings.TrimSpace(fen))
+	if len(fields) < 4 {
+		return ""
+	}
+
+	return strings.Join(fields[:4], " ")
+}
+
+func isInsufficientMaterialFEN(fen string) bool {
+	fields := strings.Fields(strings.TrimSpace(fen))
+	if len(fields) == 0 {
+		return false
+	}
+
+	board := fields[0]
+	whiteKnights := 0
+	blackKnights := 0
+	whiteBishops := 0
+	blackBishops := 0
+	whiteBishopColors := make([]int, 0, 2)
+	blackBishopColors := make([]int, 0, 2)
+	pieceSquares := 0
+	rank := 7
+	file := 0
+
+	for _, char := range board {
+		switch {
+		case char == '/':
+			rank--
+			file = 0
+		case char >= '1' && char <= '8':
+			file += int(char - '0')
+		default:
+			pieceSquares++
+			switch char {
+			case 'P', 'p', 'R', 'r', 'Q', 'q':
+				return false
+			case 'N':
+				whiteKnights++
+			case 'n':
+				blackKnights++
+			case 'B':
+				whiteBishops++
+				whiteBishopColors = append(whiteBishopColors, (file+rank)%2)
+			case 'b':
+				blackBishops++
+				blackBishopColors = append(blackBishopColors, (file+rank)%2)
+			case 'K', 'k':
+			default:
+				return false
+			}
+			file++
+		}
+	}
+
+	minorPieces := whiteKnights + blackKnights + whiteBishops + blackBishops
+	if pieceSquares == 2 {
+		return true
+	}
+
+	if minorPieces == 1 {
+		return true
+	}
+
+	if pieceSquares == 4 &&
+		whiteKnights == 0 &&
+		blackKnights == 0 &&
+		whiteBishops == 1 &&
+		blackBishops == 1 &&
+		len(whiteBishopColors) == 1 &&
+		len(blackBishopColors) == 1 &&
+		whiteBishopColors[0] == blackBishopColors[0] {
+		return true
+	}
+
+	return false
 }
 
 func cloneMoves(in []Move) []Move {
