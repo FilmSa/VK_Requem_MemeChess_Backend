@@ -63,6 +63,7 @@ type Session struct {
 	CurrentPositionHash string       `json:"current_position_hash"`
 	VariantPly          int          `json:"variant_ply"`
 	InviteExpiresAt     time.Time
+	QuickGame           bool
 	BotGame             bool   `json:"bot_game,omitempty"`
 	BotDifficulty       string `json:"bot_difficulty,omitempty"`
 

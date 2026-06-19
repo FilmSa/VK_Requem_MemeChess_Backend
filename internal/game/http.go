@@ -92,6 +92,11 @@ type matchSearchRequest struct {
 	MaxStake      int64  `json:"max_stake"`
 }
 
+type quickGameSearchRequest struct {
+	MinStake int64 `json:"min_stake"`
+	MaxStake int64  `json:"max_stake"`
+}
+
 type robotCreateRequest struct {
 	GameMode   string `json:"game_mode"`
 	Difficulty string `json:"difficulty"`
@@ -715,6 +720,65 @@ func (h *HTTP) PostMatchSearchLeave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := h.Svc.LeaveMatchSearch(participant.ID)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *HTTP) PostQuickGameSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	participant, err := h.AuthService.UserFromBearer(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+
+	var req quickGameSearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	result, err := h.Svc.SearchQuickGame(r.Context(), QuickGameSearchInput{
+		UserID:   participant.ID,
+		MinStake: req.MinStake,
+		MaxStake: req.MaxStake,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidStakeRange):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid stake range"})
+		case errors.Is(err, user.ErrInsufficientGameCurrency):
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "insufficient game currency"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to search quick game"})
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *HTTP) PostQuickGameSearchLeave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	participant, err := h.AuthService.UserFromBearer(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+
+	result, err := h.Svc.LeaveQuickGameSearch(r.Context(), participant.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to leave quick game search"})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, result)
 }
 
