@@ -10,6 +10,6 @@ PawnRequiem - Мемные Шахматы
 
 ## Ссылки
 
-- **Frontend-часть:** [Tumladen Frontend](https://github.com/FilmSa/VK_Requem_MemeChess_front)
+- **Frontend:** [PawnRequiem_Front](https://github.com/FilmSa/VK_Requem_MemeChess_front)
 
 - [deploy](https://www.pawn-requiem.ru/)
